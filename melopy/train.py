@@ -10,11 +10,13 @@ import json
 from tqdm import tqdm
 import argparse
 
+from typing import Optional
 import random
 
 from tokenizer import MIDITokenizer
 from dataset import MIDIDataset, get_midi_files
 from model import MIDITransformer
+from visualizer import TrainVisualizer
 
 
 class Trainer:
@@ -24,19 +26,21 @@ class Trainer:
         self,
         model: nn.Module,
         train_loader: DataLoader,
-        val_loader = None,
+        val_loader: Optional[DataLoader] = None,
         learning_rate: float = 3e-4,
         weight_decay: float = 0.01,
         device: str = 'cuda' if torch.cuda.is_available() else 'cpu',
-        checkpoint_dir: str = 'checkpoints'
+        checkpoint_dir: str = 'checkpoints',
+        vis: Optional[TrainVisualizer] = None,
     ):
         self.model = model.to(device)
         self.train_loader = train_loader
         self.val_loader = val_loader
         self.device = device
         self.checkpoint_dir = checkpoint_dir
+        self.vis = vis
+
         
-        # Create checkpoint directory
         os.makedirs(checkpoint_dir, exist_ok=True)
         
         # Optimizer
@@ -93,7 +97,14 @@ class Trainer:
                 'loss': f'{loss.item():.4f}',
                 'lr': f'{self.scheduler.get_last_lr()[0]:.6f}'
             })
-        
+
+            # --- TensorBoard metrics ---
+            if self.vis is not None:
+                if self.global_step % 1000 == 0: # constant log interval        
+                    self.vis.log_loss(loss.item(), self.global_step)
+                    self.vis.log_lr(self.optimizer, self.global_step)
+                    self.vis.log_grad_norm(self.model, self.global_step)
+
         avg_loss = total_loss / len(self.train_loader)
         self.train_losses.append(avg_loss)
         return avg_loss
@@ -116,6 +127,10 @@ class Trainer:
                 total_loss += loss.item()
         
         avg_loss = total_loss / len(self.val_loader)
+
+        if self.vis is not None:
+            self.vis.log_scalar("loss", avg_loss, self.global_step, prefix="val")
+
         self.val_losses.append(avg_loss)
         return avg_loss
     
@@ -191,7 +206,10 @@ class Trainer:
             if epoch % save_every == 0:
                 self.save_checkpoint(f'checkpoint_epoch_{epoch}.pt')
             self.save_checkpoint(f'checkpoint_quicksave.pt')
-        
+
+            if self.vis is not None:
+                self.vis.generate_and_log_midi(self.global_step)
+
         # Save final checkpoint
         self.save_checkpoint('final_model.pt')
         print("Training complete!")
@@ -202,6 +220,7 @@ def main():
     parser.add_argument('--data_dir', type=str, default='data/train', help='Directory containing MIDI files')
     parser.add_argument('--val_data_dir', type=str, default='data/val', help='Directory containing MIDI files (val)')
     parser.add_argument('--checkpoint_dir', type=str, default='checkpoints', help='Directory for checkpoints')
+    parser.add_argument('--log_dir', type=str, default='checkpoints/tensorboard', help='Directory for logs')
     parser.add_argument('--seq_length', type=int, default=512, help='Sequence length')
     parser.add_argument('--batch_size', type=int, default=32, help='Batch size')
     parser.add_argument('--num_epochs', type=int, default=50, help='Number of epochs')
@@ -315,10 +334,9 @@ def main():
         dataset,
         batch_size=args.batch_size,
         shuffle=True,
-        num_workers=0
-        # num_workers=2,       # Use small >0 to speed up 然并卵
-        # pin_memory=True,     # Help copy data to GPU faster 然并卵
-        # persistent_workers=True  # Keeps workers alive between epochs 然并卵
+        num_workers=2,       # Use small >0 to speed up 然并卵
+        pin_memory=True,     # Help copy data to GPU faster 然并卵
+        persistent_workers=True  # Keeps workers alive between epochs 然并卵
     )
 
     val_loader = DataLoader(
@@ -347,7 +365,8 @@ def main():
         train_loader=train_loader,
         val_loader=val_loader,
         learning_rate=args.lr,
-        checkpoint_dir=args.checkpoint_dir
+        checkpoint_dir=args.checkpoint_dir,
+        vis=TrainVisualizer(log_dir = args.log_dir)
     )
     
     # Resume from checkpoint if requested
@@ -356,6 +375,9 @@ def main():
     
     # Train
     trainer.train(num_epochs=args.num_epochs, save_every=args.save_every)
+    
+    if trainer.vis is not None:
+        trainer.vis.close()
 
 
 if __name__ == '__main__':
