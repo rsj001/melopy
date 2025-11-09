@@ -1,5 +1,12 @@
 *.mid
+
 data/*
 checkpoints/*
+
+!data/.gitkeep
+!checkpoints/.gitkeep
+
 *.sh
 *.cmd
+
+__pycache__

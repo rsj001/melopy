@@ -199,7 +199,7 @@ class Trainer:
 
 def main():
     parser = argparse.ArgumentParser(description='Train MIDI GPT model')
-    parser.add_argument('--data_dir', type=str, default='data/midi', help='Directory containing MIDI files')
+    parser.add_argument('--data_dir', type=str, default='data/train', help='Directory containing MIDI files')
     parser.add_argument('--val_data_dir', type=str, default='data/val', help='Directory containing MIDI files (val)')
     parser.add_argument('--checkpoint_dir', type=str, default='checkpoints', help='Directory for checkpoints')
     parser.add_argument('--seq_length', type=int, default=512, help='Sequence length')
@@ -323,7 +323,7 @@ def main():
 
     val_loader = DataLoader(
         val_dataset,
-        batch_size=16, # Note the const
+        batch_size=args.batch_size, # Note the const
         shuffle=False,       # 验证集不打乱
         num_workers=0
     )
