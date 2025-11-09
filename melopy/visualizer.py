@@ -8,8 +8,6 @@ import matplotlib.pyplot as plt
 from torch.utils.tensorboard import SummaryWriter
 import numpy as np
 
-from midi2audio import FluidSynth
-
 class TrainVisualizer:
     def __init__(self, log_dir="checkpoints/tensorboard", sample_rate=16000, fps=100,
                  max_audio_seconds=10, ema_decay=0.98):
@@ -140,6 +138,7 @@ class TrainVisualizer:
                     step,
                     sample_rate=self.sample_rate
                 )
+            print(f"DEBUG: tensor={audio_tensor}")
         except Exception as e:
             print(f"[ERROR] failed logging audio at step {step}:{e}")
 
