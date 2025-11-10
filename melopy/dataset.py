@@ -3,7 +3,7 @@ import torch
 from torch.utils.data import Dataset
 from typing import List, Optional
 from tokenizer import MIDITokenizer
-from tqdm import tqdm
+from tqdm.auto import tqdm
 
 
 class MIDIDataset(Dataset):
@@ -56,7 +56,7 @@ class MIDIDataset(Dataset):
             # TODO : efficiency evaluation
 
             except Exception as e:
-                print(f"Error processing {midi_file}: {e}")
+                tqdm.write(f"Error processing {midi_file}: {e}")
                 continue
         
         print(f"Created {len(self.sequences)} sequences of length {seq_length}")

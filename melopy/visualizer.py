@@ -1,5 +1,7 @@
 import io
 import os
+import subprocess
+
 import torch
 import pretty_midi
 import matplotlib
@@ -82,8 +84,7 @@ class TrainVisualizer:
     # ---------------------------------------------------------
     # MIDI Visuals
     # ---------------------------------------------------------
-    def generate_and_log_midi(self, step, tag="generated"): # 一个临时方案，临时方案！！！！
-        import subprocess
+    def generate_and_log_midi(self, step: int, tag="generated"): # 一个临时方案，临时方案！！！！
         subprocess.run(["sh", "scripts/generate_with_prompt.sh"], check=True)
         self.log_midi("results/demo.mid", step, tag)
 
