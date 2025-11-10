@@ -5,11 +5,11 @@
 # Option 1: Use a MIDI file as prompt with custom length
 python melopy/generate.py \
   --checkpoint checkpoints/checkpoint_quicksave.pt \
-  --prompt_midi data/train/sample_c_major.mid \
-  --prompt_length 14 \
+  --prompt_midi "data/val/37719 - Flower Dance.mid" \
+  --prompt_length 28 \
   --output results/continuation.mid \
   --max_length 512 \
-  --temperature 1.2 \
+  --temperature 1.3 \
   --top_k 50 \
   --top_p 0.9
 

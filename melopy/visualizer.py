@@ -10,7 +10,7 @@ import numpy as np
 
 class TrainVisualizer:
     def __init__(self, log_dir="checkpoints/tensorboard", sample_rate=16000, fps=100,
-                 max_audio_seconds=10, ema_decay=0.98):
+                 max_audio_seconds=20, ema_decay=0.98):
         """
         ema_decay 用于平滑曲线，例如 avg_loss。
         """
@@ -106,6 +106,8 @@ class TrainVisualizer:
 
         fig, ax = plt.subplots(figsize=(10, 4), dpi=100)
         ax.imshow(pianoroll, aspect="auto", origin="lower", cmap="gray_r")
+
+        ax.set_ylim(35, 85) # 省略掉一般不会出现的区域
         ax.set_title(f"Pianoroll: {tag}")
         ax.set_xlabel("Time (frames)")
         ax.set_ylabel("Pitch")
@@ -138,7 +140,6 @@ class TrainVisualizer:
                     step,
                     sample_rate=self.sample_rate
                 )
-            print(f"DEBUG: tensor={audio_tensor}")
         except Exception as e:
             print(f"[ERROR] failed logging audio at step {step}:{e}")
 
