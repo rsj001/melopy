@@ -115,7 +115,8 @@ def main():
     parser.add_argument('--top_k', type=int, default=50, help='Top-k sampling parameter')
     parser.add_argument('--top_p', type=float, default=0.9, help='Nucleus sampling parameter')
     parser.add_argument('--seed', type=int, default=None, help='Random seed')
-    parser.add_argument('--piano_channels', type=str, default='0', help='Comma-separated MIDI channels for prompt (default: 0)')
+    # this is what model will hear before regressive generation
+    parser.add_argument('--piano_channels', type=str, default='0, 1, 2, 3, 4, 5', help='Comma-separated MIDI channels for prompt (default: 0)')
     
     args = parser.parse_args()
     

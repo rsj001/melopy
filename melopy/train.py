@@ -249,7 +249,7 @@ def main():
         help='Resume from checkpoint'
     )
     
-    parser.add_argument('--piano_channels', type=str, default='0', help='Comma-separated list of MIDI channels for piano (default: 0)')
+    parser.add_argument('--piano_channels', type=str, default='0,1,2,3,4,5', help='Comma-separated list of MIDI channels for piano (default: 0)')
 
     args = parser.parse_args()
     
