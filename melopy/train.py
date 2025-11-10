@@ -341,7 +341,7 @@ def main():
 
     val_loader = DataLoader(
         val_dataset,
-        batch_size=args.batch_size, # Note the const
+        batch_size=16, # 为了统一标准，这应该是常数
         shuffle=False,       # 验证集不打乱
         num_workers=0
     )
