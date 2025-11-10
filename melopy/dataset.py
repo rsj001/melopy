@@ -37,7 +37,7 @@ class MIDIDataset(Dataset):
         # clarify tracks / channels here:
         # A "piano channel" in MIDI is not a specific technical term, but rather a user-defined designation, usually MIDI channel 1.
         if piano_channels is None:
-            piano_channels = [0]
+            piano_channels = [0, 1, 2, 3, 4, 5]
         
         # Tokenize all MIDI files
         self.sequences = []

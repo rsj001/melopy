@@ -102,6 +102,9 @@ class MIDITokenizer:
         # Start with default MIDI tempo (120 BPM = 500000 microseconds per beat)
         default_tempo = 500000
         tempo_map = [(0, default_tempo)]
+
+        max_pitch = 0
+        min_pitch = 100
         
         # First pass: build tempo map from set_tempo events
         for track in mid.tracks:
@@ -111,6 +114,22 @@ class MIDITokenizer:
                 if msg.type == 'set_tempo':
                     tempo_map.append((track_time, msg.tempo))
                     # print(f"Tick #{track_time} Tempo: {msg.tempo} ms/beat")
+                if msg.type == 'note_on' and msg.velocity > 0:
+                    max_pitch = max(max_pitch, msg.note)
+                    min_pitch = min(min_pitch, msg.note)
+
+        def legal_interval(min_p, max_p):
+            return max_pitch <= self.max_pitch and min_pitch >= self.min_pitch
+        
+        pitch_offset = 0
+        if not legal_interval(min_pitch, max_pitch):
+            if legal_interval(min_pitch - 8, max_pitch - 8):
+                pitch_offset = -8
+            elif legal_interval(min_pitch + 8, max_pitch + 8):
+                pitch_offset = 8
+            else:
+                pitch_offset =  ((self.max_pitch + self.min_pitch) - (max_pitch + min_pitch)) // 2
+
         
         # Sort by time in case tracks have tempo events at different positions
         tempo_map.sort(key=lambda x: x[0])
@@ -146,20 +165,22 @@ class MIDITokenizer:
             track_time = 0
             for msg in track:
                 track_time += msg.time
-                
+
                 if msg.type == 'note_on' and msg.channel in piano_channels:
-                    if self.min_pitch <= msg.note <= self.max_pitch:
+                    new_pitch = msg.note + pitch_offset
+                    if self.min_pitch <= new_pitch <= self.max_pitch:
                         events.append({
                             'type': 'note_on' if msg.velocity > 0 else 'note_off',
-                            'pitch': msg.note,
+                            'pitch': new_pitch,
                             'velocity': msg.velocity,
                             'time_ticks': track_time
                         })
                 elif msg.type == 'note_off' and msg.channel in piano_channels:
-                    if self.min_pitch <= msg.note <= self.max_pitch:
+                    new_pitch = msg.note + pitch_offset
+                    if self.min_pitch <= new_pitch <= self.max_pitch:
                         events.append({
                             'type': 'note_off',
-                            'pitch': msg.note,
+                            'pitch': new_pitch,
                             'velocity': 0,
                             'time_ticks': track_time
                         })
@@ -188,7 +209,7 @@ class MIDITokenizer:
                 vel_bin = self.velocity_to_bin(event['velocity'])
                 tokens.append(self.token_to_id[f'VELOCITY_{vel_bin}'])
                 tokens.append(self.token_to_id[f'NOTE_ON_{event["pitch"]}'])
-            else:
+            elif event['type'] == 'note_off':
                 tokens.append(self.token_to_id[f'NOTE_OFF_{event["pitch"]}'])
             
             prev_time_ms = event_time_ms
