@@ -217,7 +217,8 @@ class Trainer:
 
 def main():
     parser = argparse.ArgumentParser(description='Train MIDI GPT model')
-    parser.add_argument('--data_dir', type=str, default='data/train', help='Directory containing MIDI files')
+
+    parser.add_argument('--data_dir_with_weights', type=str, default='data/train:1.0', nargs='+', help='Directory containing MIDI files with weights')
     parser.add_argument('--val_data_dir', type=str, default='data/val', help='Directory containing MIDI files (val)')
     parser.add_argument('--checkpoint_dir', type=str, default='checkpoints', help='Directory for checkpoints')
     parser.add_argument('--log_dir', type=str, default='checkpoints/tensorboard', help='Directory for logs')
@@ -237,7 +238,7 @@ def main():
         nargs='?',
         const=25,
         default=None,
-        help='Trim the training set'
+        help='Trim the training set for debugging'
     )
 
     parser.add_argument(
@@ -282,8 +283,24 @@ def main():
         json.dump(tokenizer_config, f, indent=2)
     
     # Load MIDI files
-    print(f"Loading MIDI files from {args.data_dir}...")
-    midi_files = get_midi_files(args.data_dir)
+    midi_files = []
+    for item in args.data_dir_with_weights:
+        path, weight = item.split(':')
+        weight = float(weight)
+
+        print(f"Loading MIDI files from {path}... ", end='')
+        cur_midi_files = get_midi_files(path)
+
+        tot_num = len(cur_midi_files)
+        sample_num = int(weight * tot_num)
+        sample_num = max(0, sample_num)
+        sample_num = min(sample_num, tot_num)
+
+        print(f"Random sampling {weight} * {tot_num} -> {sample_num} files... ")
+        cur_midi_files = random.sample(cur_midi_files, sample_num)
+
+        midi_files += cur_midi_files
+        
 
     print(f"Loading MIDI files from {args.val_data_dir}...")
     val_midi_files = get_midi_files(args.val_data_dir)
@@ -291,12 +308,12 @@ def main():
 
     if args.debug:
         if len(midi_files) > args.debug:
-            print(f"Dataset trimmed from {len(midi_files)} to {args.debug}")
+            print(f"Training dataset trimmed from {len(midi_files)} to {args.debug}")
             debug_list = random.sample(midi_files, args.debug)
             midi_files = debug_list
     
     if len(midi_files) == 0:
-        print(f"No MIDI files found in {args.data_dir}")
+        print(f"No MIDI files found in {args.data_dir_with_weights}. Check the format.")
         print("Please add MIDI files to the data directory and try again.")
         return
     
