@@ -100,16 +100,15 @@ class Trainer:
 
             # --- TensorBoard metrics ---
             if self.vis is not None:
-                if self.global_step % 1000 == 0: # constant log interval        
+                if self.global_step % 500 == 0: # constant log interval        
                     self.vis.log_loss(loss.item(), self.global_step)
                     self.vis.log_lr(self.optimizer, self.global_step)
                     self.vis.log_grad_norm(self.model, self.global_step)
+                    self.vis.log_loss(total_loss / (batch_idx + 1), self.global_step, prefix="train", name="avg_loss")
 
         
         avg_loss = total_loss / len(self.train_loader)
         self.train_losses.append(avg_loss)
-        if self.vis is not None:
-            self.vis.log_scalar("avg_loss", avg_loss, self.global_step, prefix="train")
         return avg_loss
     
     def validate(self):
