@@ -105,8 +105,11 @@ class Trainer:
                     self.vis.log_lr(self.optimizer, self.global_step)
                     self.vis.log_grad_norm(self.model, self.global_step)
 
+        
         avg_loss = total_loss / len(self.train_loader)
         self.train_losses.append(avg_loss)
+        if self.vis is not None:
+            self.vis.log_scalar("avg_loss", avg_loss, self.global_step, prefix="train")
         return avg_loss
     
     def validate(self):
