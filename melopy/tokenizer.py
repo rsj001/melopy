@@ -82,7 +82,7 @@ class MIDITokenizer:
         """Convert velocity bin to MIDI velocity."""
         return int((bin_id + 0.5) * 127 / self.num_velocity_bins)
     
-    def encode_midi(self, midi_path: str, piano_channels: Optional[List[int]] = None, pitch_augmentation: int = 0) -> List[int]:
+    def encode_midi(self, midi_path: str, piano_channels: Optional[List[int]] = None, pitch_augmentation: int = 0, force_pitch: bool = False) -> List[int]:
         """
         Encode a MIDI file to a sequence of token IDs.
         
@@ -123,15 +123,15 @@ class MIDITokenizer:
         
         pitch_offset = 0
         if not legal_interval(min_pitch, max_pitch):
-            if legal_interval(min_pitch - 8, max_pitch - 8):
-                pitch_offset = -8
-            elif legal_interval(min_pitch + 8, max_pitch + 8):
-                pitch_offset = 8
+            if legal_interval(min_pitch - 12, max_pitch - 12):
+                pitch_offset = -12
+            elif legal_interval(min_pitch + 12, max_pitch + 12):
+                pitch_offset = 12
             else:
                 pitch_offset =  ((self.max_pitch + self.min_pitch) - (max_pitch + min_pitch)) // 2
 
         if pitch_augmentation != 0:
-            if legal_interval(min_pitch + pitch_offset + pitch_augmentation, max_pitch + pitch_offset + pitch_augmentation):
+            if force_pitch or legal_interval(min_pitch + pitch_offset + pitch_augmentation, max_pitch + pitch_offset + pitch_augmentation):
                 pitch_offset += pitch_augmentation
             else:
                 return []
