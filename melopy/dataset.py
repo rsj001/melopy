@@ -1,7 +1,7 @@
 import os
 import torch
 from torch.utils.data import Dataset
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from tokenizer import MIDITokenizer
 from tqdm.auto import tqdm
 
@@ -61,6 +61,60 @@ class MIDIDataset(Dataset):
         
         print(f"Created {len(self.sequences)} sequences of length {seq_length}")
     
+    # ===============================================================
+    # Save / Load Methods Begin
+    # ===============================================================
+
+    def save(self, path: str, extra_meta: Optional[Dict[str, Any]] = None):
+        """
+        Save preprocessed dataset to disk.
+
+        Args:
+            path: Path to save file (.pt)
+            extra_meta: Optional dict for extra metadata
+        """
+        meta = {
+            "seq_length": self.seq_length,
+            "stride": self.stride,
+        }
+        if extra_meta:
+            meta.update(extra_meta)
+
+        torch.save({
+            "sequences": self.sequences,
+            "meta": meta
+        }, path)
+
+        print(f"Dataset saved to {path} ({len(self.sequences)} sequences)")
+
+    @classmethod
+    def load(cls, path: str, tokenizer: MIDITokenizer):
+        """
+        Load a preprocessed dataset from disk.
+        Does NOT reprocess MIDI files.
+
+        Args:
+            path: Path to .pt file
+            tokenizer: tokenizer
+        """
+        data = torch.load(path, map_location="cpu")
+
+        # Create empty instance without calling __init__
+        obj = cls.__new__(cls)
+        obj.tokenizer = tokenizer
+        obj.seq_length = data["meta"].get("seq_length", 512)
+        obj.stride = data["meta"].get("stride", obj.seq_length)
+        obj.sequences = data["sequences"]
+
+        # obj.midi_files is unused
+
+        print(f"Loaded dataset from {path} ({len(obj.sequences)} sequences)")
+        return obj
+
+    # ===============================================================
+    # Save / Load Methods End
+    # ===============================================================
+
     def __len__(self):
         return len(self.sequences)
     
