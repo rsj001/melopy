@@ -1,4 +1,4 @@
-# MIDI GPT - Piano Music Generation with Transformer
+# Melopy - MIDI Generation with Transformer
 
 A PyTorch-based Decoder-only GPT model for autoregressive generation of piano MIDI sequences.
 
@@ -17,10 +17,10 @@ A PyTorch-based Decoder-only GPT model for autoregressive generation of piano MI
 │   ├── dataset.py        # Dataset loader and preprocessing
 │   ├── model.py          # Decoder-only GPT architecture
 │   ├── train.py          # Training loop and utilities
+│   ├── visualizer.py     # Visualizing training with tensorboard
 │   └── generate.py       # Generation and sampling
 ├── data/                # Place your MIDI files here
-├── checkpoints/         # Saved model checkpoints
-└── main.py              # Training entry point
+└── checkpoints/         # Saved model checkpoints
 ```
 
 ## Setup
@@ -28,5 +28,10 @@ A PyTorch-based Decoder-only GPT model for autoregressive generation of piano MI
 1. Add your MIDI files to the `data/train/` directory
 2. Install dependencies:
    - PyTorch
+   - tensorboard
    - mido
    - tqdm
+   - pyfluidsynth (with libs)
+3. Pre-process data with example_preprocess.sh
+4. Train with example_train.sh
+5. Generate with example_generate_with_prompt.sh
