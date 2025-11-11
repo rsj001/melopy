@@ -244,6 +244,7 @@ def main():
     parser.add_argument('--num_layers', type=int, default=6, help='Number of transformer layers')
     parser.add_argument('--num_heads', type=int, default=8, help='Number of attention heads')
     parser.add_argument('--save_every', type=int, default=5, help='Checkpoints saving frequency')
+    parser.add_argument('--chunk_stride', type=int, default=256, help='Stride for sequence chunking')
 
     parser.add_argument(
         '--debug',
@@ -273,6 +274,9 @@ def main():
     )
     
     parser.add_argument('--piano_channels', type=str, default='0,1,2,3,4,5', help='Comma-separated list of MIDI channels for piano (default: 0)')
+
+    # only chunk_stride data_dir_with_weights seq_length piano_channels matters in preprocessing
+    # TODO: 把训练逻辑和预处理分开
 
     args = parser.parse_args()
     
@@ -358,7 +362,8 @@ def main():
             midi_files=midi_files,
             tokenizer=tokenizer,
             seq_length=args.seq_length,
-            piano_channels=piano_channels
+            piano_channels=piano_channels,
+            stride=args.chunk_stride
         )
         if len(dataset) == 0:
             print("No sequences created from MIDI files. Check your data.")
@@ -382,7 +387,8 @@ def main():
         midi_files=val_midi_files,
         tokenizer=tokenizer,
         seq_length=args.seq_length,
-        piano_channels=piano_channels
+        piano_channels=piano_channels,
+        stride=args.chunk_stride
     )
     if len(val_dataset) == 0:
         print("No sequences created from MIDI files. Check your data. (val)")
