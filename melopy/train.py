@@ -235,6 +235,14 @@ def main():
         help='Path(s) to preprocessed .pth dataset files with weights(e.g., data/train.pth:1.0)'
     )
 
+    parser.add_argument(
+        '--pitch_augmentation',
+        type=int,
+        default=[0],
+        nargs='+',
+        help='Data augmentation by pitch shifting. Provide a list of integers (e.g., -2 0 2)'
+    )
+
     parser.add_argument('--val_data_dir', type=str, default='data/val', help='Directory containing MIDI files (val)')
     parser.add_argument('--checkpoint_dir', type=str, default='checkpoints', help='Directory for checkpoints')
     parser.add_argument('--log_dir', type=str, default='checkpoints/tensorboard', help='Directory for logs')
@@ -365,7 +373,8 @@ def main():
             tokenizer=tokenizer,
             seq_length=args.seq_length,
             piano_channels=piano_channels,
-            stride=args.chunk_stride
+            stride=args.chunk_stride,
+            pitch_augmentation=args.pitch_augmentation
         )
         if len(dataset) == 0:
             print("No sequences created from MIDI files. Check your data.")
