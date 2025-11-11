@@ -81,7 +81,7 @@ class MIDIDataset(Dataset):
             meta.update(extra_meta)
 
         torch.save({
-            "sequences": self.sequences,
+            "sequences": torch.tensor(self.sequences, dtype=torch.uint8),
             "meta": meta
         }, path)
 
