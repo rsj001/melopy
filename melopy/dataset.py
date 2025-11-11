@@ -58,6 +58,7 @@ class MIDIDataset(Dataset):
             except Exception as e:
                 tqdm.write(f"Error processing {midi_file}: {e}")
                 continue
+        self.sequences = torch.tensor(self.sequences, dtype=torch.uint8)
         
         print(f"Created {len(self.sequences)} sequences of length {seq_length}")
     
@@ -81,7 +82,7 @@ class MIDIDataset(Dataset):
             meta.update(extra_meta)
 
         torch.save({
-            "sequences": torch.tensor(self.sequences, dtype=torch.uint8),
+            "sequences": self.sequences,
             "meta": meta
         }, path)
 
@@ -125,8 +126,8 @@ class MIDIDataset(Dataset):
         """
         sequence = self.sequences[idx]
         
-        input_ids = torch.tensor(sequence[:-1], dtype=torch.long)
-        target_ids = torch.tensor(sequence[1:], dtype=torch.long)
+        input_ids = sequence[:-1]
+        target_ids = sequence[1:]
         
         return {
             'input_ids': input_ids,
