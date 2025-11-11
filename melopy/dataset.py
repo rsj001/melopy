@@ -124,7 +124,7 @@ class MIDIDataset(Dataset):
         Returns input and target sequences.
         Target is input shifted by 1 position.
         """
-        sequence = self.sequences[idx]
+        sequence = self.sequences[idx].long()
         
         input_ids = sequence[:-1]
         target_ids = sequence[1:]
