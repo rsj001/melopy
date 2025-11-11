@@ -82,7 +82,7 @@ class MIDITokenizer:
         """Convert velocity bin to MIDI velocity."""
         return int((bin_id + 0.5) * 127 / self.num_velocity_bins)
     
-    def encode_midi(self, midi_path: str, piano_channels: Optional[List[int]] = None) -> List[int]:
+    def encode_midi(self, midi_path: str, piano_channels: Optional[List[int]] = None, pitch_augmentation: int = 0) -> List[int]:
         """
         Encode a MIDI file to a sequence of token IDs.
         
@@ -130,6 +130,11 @@ class MIDITokenizer:
             else:
                 pitch_offset =  ((self.max_pitch + self.min_pitch) - (max_pitch + min_pitch)) // 2
 
+        if pitch_augmentation != 0:
+            if legal_interval(min_pitch + pitch_augmentation, max_pitch + pitch_augmentation):
+                pitch_offset += pitch_augmentation
+            else:
+                return []
         
         # Sort by time in case tracks have tempo events at different positions
         tempo_map.sort(key=lambda x: x[0])
@@ -198,7 +203,12 @@ class MIDITokenizer:
             
             # Emit time shift tokens if needed
             if time_diff_ms > 0:
-                time_units = time_diff_ms // self.time_shift_resolution                
+                time_units = time_diff_ms // self.time_shift_resolution
+                
+                # shorten too long time_units
+                if time_units > self.max_time_shift * 5:
+                    time_units = self.max_time_shift * 5
+                
                 while time_units > 0:
                     shift = min(time_units, self.max_time_shift)
                     tokens.append(self.token_to_id[f'TIME_SHIFT_{shift}'])

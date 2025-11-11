@@ -136,7 +136,7 @@ class Trainer:
         self.val_losses.append(avg_loss)
         return avg_loss
     
-    def save_checkpoint(self, filename='checkpoint.pt'):
+    def save_checkpoint(self, filename):
         """Save model checkpoint."""
         checkpoint = {
             'epoch': self.epoch,
@@ -152,7 +152,7 @@ class Trainer:
         path = os.path.join(self.checkpoint_dir, filename)
         torch.save(checkpoint, path)
     
-    def load_checkpoint(self, filename='checkpoint.pt'):
+    def load_checkpoint(self, filename):
         """Load model checkpoint."""
         path = os.path.join(self.checkpoint_dir, filename)
         if not os.path.exists(path):
@@ -431,7 +431,7 @@ def main():
         model=model,
         train_loader=train_loader,
         val_loader=val_loader,
-        learning_rate=args.lr,
+        learning_rate=args.lr, # learning_rate 会被 resume 覆盖
         checkpoint_dir=args.checkpoint_dir,
         vis=TrainVisualizer(log_dir = args.log_dir)
     )

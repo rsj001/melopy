@@ -18,7 +18,8 @@ class MIDIDataset(Dataset):
         tokenizer: MIDITokenizer,
         seq_length: int = 512,
         stride: Optional[int] = None,
-        piano_channels: Optional[List[int]] = None
+        piano_channels: Optional[List[int]] = None,
+        pitch_augmentation: int = 0,
     ):
         """
         Args:
@@ -46,7 +47,7 @@ class MIDIDataset(Dataset):
         pbar = tqdm(midi_files, desc=f'Preprocessing')
         for midi_file_idx, midi_file in enumerate(pbar):
             try:
-                tokens = tokenizer.encode_midi(midi_file, piano_channels=piano_channels)
+                tokens = tokenizer.encode_midi(midi_file, piano_channels=piano_channels, pitch_augmentation=pitch_augmentation)
                 
                 # Chunk the sequence
                 for i in range(0, len(tokens) - seq_length, self.stride):
