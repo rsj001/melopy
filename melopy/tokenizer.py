@@ -131,7 +131,7 @@ class MIDITokenizer:
                 pitch_offset =  ((self.max_pitch + self.min_pitch) - (max_pitch + min_pitch)) // 2
 
         if pitch_augmentation != 0:
-            if abs(pitch_augmentation) <= 3 or legal_interval(min_pitch + pitch_offset + pitch_augmentation, max_pitch + pitch_offset + pitch_augmentation):
+            if legal_interval(min_pitch + pitch_offset + pitch_augmentation, max_pitch + pitch_offset + pitch_augmentation):
                 pitch_offset += pitch_augmentation
             else:
                 return []
