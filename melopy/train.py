@@ -100,7 +100,7 @@ class Trainer:
 
             # --- TensorBoard metrics ---
             if self.vis is not None:
-                if self.global_step % 500 == 0: # constant log interval        
+                if self.global_step % self.vis.log_interval == 0:
                     self.vis.log_loss(loss.item(), self.global_step)
                     self.vis.log_lr(self.optimizer, self.global_step)
                     self.vis.log_grad_norm(self.model, self.global_step)
@@ -255,6 +255,7 @@ def main():
     parser.add_argument('--num_heads', type=int, default=8, help='Number of attention heads')
     parser.add_argument('--save_every', type=int, default=5, help='Checkpoints saving frequency')
     parser.add_argument('--chunk_stride', type=int, default=256, help='Stride for sequence chunking')
+    parser.add_argument('--log_interval', type=int, default=500, help='Log frenqeuency (in steps)')
 
     parser.add_argument(
         '--debug',
@@ -442,7 +443,7 @@ def main():
         val_loader=val_loader,
         learning_rate=args.lr, # learning_rate 会被 resume 覆盖
         checkpoint_dir=args.checkpoint_dir,
-        vis=TrainVisualizer(log_dir = args.log_dir)
+        vis=TrainVisualizer(log_dir = args.log_dir, log_interval=args.log_interval)
     )
     
     # Resume from checkpoint if requested

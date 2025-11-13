@@ -12,7 +12,7 @@ import numpy as np
 
 class TrainVisualizer:
     def __init__(self, log_dir="checkpoints/tensorboard", sample_rate=16000, fps=100,
-                 max_audio_seconds=20, ema_decay=0.98):
+                 max_audio_seconds=20, ema_decay=0.98, log_interval = 500):
         """
         ema_decay 用于平滑曲线，例如 avg_loss。
         """
@@ -23,6 +23,7 @@ class TrainVisualizer:
         self.fps = fps
         self.max_audio_seconds = max_audio_seconds
         self.ema_decay = ema_decay
+        self.log_interval = log_interval
         self._ema_cache = {}  # key -> ema value
         
 
