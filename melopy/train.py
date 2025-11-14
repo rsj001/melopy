@@ -88,23 +88,30 @@ class Trainer:
             self.optimizer.step()
             self.scheduler.step()
             
-            # Update metrics
-            total_loss += loss.item()
-            self.global_step += 1
-            
-            # Update progress bar
-            pbar.set_postfix({
-                'loss': f'{loss.item():.4f}',
-                'lr': f'{self.scheduler.get_last_lr()[0]:.6f}'
-            })
+            with torch.no_grad():
+                pred_ids = torch.argmax(logits, dim=-1)
+                correct = (pred_ids == target_ids).float()
+                accuracy = correct.mean().item()
 
-            # --- TensorBoard metrics ---
-            if self.vis is not None:
-                if self.global_step % self.vis.log_interval == 0:
-                    self.vis.log_loss(loss.item(), self.global_step)
-                    self.vis.log_lr(self.optimizer, self.global_step)
-                    self.vis.log_grad_norm(self.model, self.global_step)
-                    self.vis.log_loss(total_loss / (batch_idx + 1), self.global_step, prefix="train", name="avg_loss")
+                # Update metrics
+                total_loss += loss.item()
+                self.global_step += 1
+
+                # Update progress bar
+                pbar.set_postfix({
+                    'loss': f'{loss.item():.4f}',
+                    'acc': f'{accuracy:.4f}',
+                    'lr': f'{self.scheduler.get_last_lr()[0]:.6f}'
+                })
+
+                # --- TensorBoard metrics ---
+                if self.vis is not None:
+                    if self.global_step % self.vis.log_interval == 0:
+                        self.vis.log_loss(loss.item(), self.global_step)
+                        self.vis.log_lr(self.optimizer, self.global_step)
+                        self.vis.log_grad_norm(self.model, self.global_step)
+                        self.vis.log_loss(total_loss / (batch_idx + 1), self.global_step, prefix="train", name="avg_loss")
+                        self.vis.log_loss(accuracy, self.global_step, prefix="train", name="accuracy")
 
         
         avg_loss = total_loss / len(self.train_loader)
@@ -245,7 +252,11 @@ def main():
 
     parser.add_argument('--val_data_dir', type=str, default='data/val', help='Directory containing MIDI files (val)')
     parser.add_argument('--checkpoint_dir', type=str, default='checkpoints', help='Directory for checkpoints')
-    parser.add_argument('--log_dir', type=str, default='checkpoints/tensorboard', help='Directory for logs')
+
+    args, _ = parser.parse_known_args()
+    default_log_dir = os.path.join(args.checkpoint_dir, "logs")
+    parser.add_argument('--log_dir', type=str, default=default_log_dir, help='Directory for logs')
+
     parser.add_argument('--seq_length', type=int, default=512, help='Sequence length')
     parser.add_argument('--batch_size', type=int, default=32, help='Batch size')
     parser.add_argument('--num_epochs', type=int, default=50, help='Number of epochs')
