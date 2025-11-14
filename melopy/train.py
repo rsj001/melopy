@@ -4,6 +4,7 @@ Training script for MIDI GPT model.
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.utils.data import DataLoader, Subset, ConcatDataset
 import os
 import json
@@ -32,6 +33,8 @@ class Trainer:
         device: str = 'cuda' if torch.cuda.is_available() else 'cpu',
         checkpoint_dir: str = 'checkpoints',
         vis: Optional[TrainVisualizer] = None,
+        pad_token_id: int = 0,
+        mask_token_id: int = 233,
     ):
         self.model = model.to(device)
         self.train_loader = train_loader
@@ -39,6 +42,8 @@ class Trainer:
         self.device = device
         self.checkpoint_dir = checkpoint_dir
         self.vis = vis
+        self.pad_token_id = pad_token_id
+        self.mask_token_id = mask_token_id
 
         
         os.makedirs(checkpoint_dir, exist_ok=True)
@@ -67,7 +72,7 @@ class Trainer:
     def train_epoch(self):
         """Train for one epoch."""
         self.model.train()
-        total_loss = 0
+        tot_loss = 0
         
         pbar = tqdm(self.train_loader, desc=f'Epoch {self.epoch}')
         for batch_idx, batch in enumerate(pbar):
@@ -75,12 +80,83 @@ class Trainer:
             target_ids = batch['target_ids'].to(self.device)
             
             # Forward pass
-            output = self.model(input_ids, target_ids)
-            logits, loss = output
+            # output = self.model(input_ids, target_ids)
+            # logits, loss = output
+
+            def hybrid_forward(input_ids, target_ids, mask_prob=0.1, ss_prob=0.1, λ=0.15):
+                """
+                input_ids: [B, L] 原始MIDI token序列
+                target_ids: [B, L] 对应的目标序列
+                """
+                # ---- 生成mask ----
+                # ss_mask = (torch.rand_like(input_ids.float()) < ss_prob) & (input_ids != self.pad_token_id)
+                mask = (torch.rand_like(input_ids.float()) < mask_prob) & (input_ids != self.pad_token_id)
+                
+                # ---- forward （正常 causal mask）----
+                # output = self.model(input_ids, target_ids)
+                # logits_teacher, next_loss = output
+
+                # with torch.no_grad():
+                # # logits_teacher: [B, L, V]
+                #     probs = F.softmax(logits_teacher, dim=-1)    # [B, L, V]
+                #     # flatten 为 [B*L, V]
+                #     probs_flat = probs.reshape(-1, probs.size(-1))
+                #     # 对每一行采样一个 token
+                #     pred_tokens = torch.multinomial(probs_flat, num_samples=1).view(probs.size(0), probs.size(1))
+                #     # pred_tokens: [B, L]
+                
+                hybrid_input = input_ids.clone()
+                hybrid_input[mask] = self.mask_token_id
+                # hybrid_input[ss_mask] = pred_tokens[ss_mask]
+
+                # ---- forward ----
+                logits, next_loss = self.model(hybrid_input, target_ids)
+                mask_loss = F.cross_entropy(logits[mask], target_ids[mask]) if mask.sum() > 0 else 0
+                total_loss = (1 - λ) * next_loss + λ * mask_loss
+
+                return logits, total_loss, next_loss, mask_loss
+
+            # def get_token_type(token_ids):
+            #     type_ids = torch.zeros_like(token_ids)
+            #     mask1 = (token_ids >= 3) & (token_ids <= 51)      # Note On
+            #     mask2 = (token_ids >= 52) & (token_ids <= 100)    # Note Off
+            #     mask3 = (token_ids >= 101) & (token_ids <= 200)   # Time
+            #     mask4 = (token_ids >= 201) & (token_ids <= 232)   # Velocity
+            #     type_ids[mask1] = 1
+            #     type_ids[mask2] = 2
+            #     type_ids[mask3] = 3
+            #     type_ids[mask4] = 4
+            #     return type_ids
+
+            # logits_flat = logits.view(-1, logits.size(-1))
+            # targets_flat = target_ids.view(-1)
+
+            # CE per token (不平均)
+            # loss_all = F.cross_entropy(logits_flat, targets_flat, reduction='none')
+
+            # 计算每个 token 的类型（基于真实 target）
+            # type_ids = get_token_type(targets_flat)
+
+            # 按类型求平均 loss
+            # def safe_mean(x):
+            #     return x.mean() if x.numel() > 0 else torch.tensor(0.0, device=x.device)
+            # loss_note_on  = safe_mean(loss_all[type_ids == 1])
+            # loss_note_off = safe_mean(loss_all[type_ids == 2])
+            # loss_time     = safe_mean(loss_all[type_ids == 3])
+            # loss_vel      = safe_mean(loss_all[type_ids == 4])
             
-            # Backward pass
+            # ------- Hybrid loss training -------
             self.optimizer.zero_grad()
-            loss.backward()
+            logits, total_loss, next_loss, mask_loss = hybrid_forward(input_ids, target_ids)
+            total_loss.backward()
+            loss = next_loss
+            # ---------------- END ----------------
+
+            # ------ 普通的前向和反向 BEGIN ---------
+            # self.optimizer.zero_grad()
+            # logits, loss = self.model(input_ids, target_ids)
+            # loss.backward()
+            # ---------------- END ----------------
             
             # Gradient clipping
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
@@ -89,25 +165,34 @@ class Trainer:
             self.scheduler.step()
             
             # Update metrics
-            total_loss += loss.item()
-            self.global_step += 1
-            
-            # Update progress bar
-            pbar.set_postfix({
-                'loss': f'{loss.item():.4f}',
-                'lr': f'{self.scheduler.get_last_lr()[0]:.6f}'
-            })
+            with torch.no_grad():
+                tot_loss += loss.item()
+                self.global_step += 1
+                
+                # Update progress bar
+                pbar.set_postfix({
+                    'loss': f'{loss.item():.4f}',
+                    'mask_loss': f'{mask_loss:.4f}',
+                    'lr': f'{self.scheduler.get_last_lr()[0]:.6f}'
+                })
 
-            # --- TensorBoard metrics ---
-            if self.vis is not None:
-                if self.global_step % self.vis.log_interval == 0:
-                    self.vis.log_loss(loss.item(), self.global_step)
-                    self.vis.log_lr(self.optimizer, self.global_step)
-                    self.vis.log_grad_norm(self.model, self.global_step)
-                    self.vis.log_loss(total_loss / (batch_idx + 1), self.global_step, prefix="train", name="avg_loss")
+                # --- TensorBoard metrics ---
+                if self.vis is not None:
+                    if self.global_step % self.vis.log_interval == 0:
+                        self.vis.log_loss(loss.item(), self.global_step)
+                        self.vis.log_lr(self.optimizer, self.global_step)
+                        self.vis.log_grad_norm(self.model, self.global_step)
+                        self.vis.log_loss(tot_loss / (batch_idx + 1), self.global_step, prefix="train", name="avg_loss")
 
-        
-        avg_loss = total_loss / len(self.train_loader)
+                        self.vis.log_loss(mask_loss, self.global_step, prefix="train", name="mask_loss")
+                        self.vis.log_loss(total_loss.item(), self.global_step, prefix="train", name="hybrid_loss")
+
+                        # self.vis.log_loss(loss_note_on, self.global_step, prefix="train/token", name="loss_note_on")
+                        # self.vis.log_loss(loss_note_off, self.global_step, prefix="train/token", name="loss_note_off")
+                        # self.vis.log_loss(loss_time, self.global_step, prefix="train/token", name="loss_time")
+                        # self.vis.log_loss(loss_vel, self.global_step, prefix="train/token", name="loss_vel")
+
+        avg_loss = tot_loss / len(self.train_loader)
         self.train_losses.append(avg_loss)
         return avg_loss
     
@@ -245,7 +330,13 @@ def main():
 
     parser.add_argument('--val_data_dir', type=str, default='data/val', help='Directory containing MIDI files (val)')
     parser.add_argument('--checkpoint_dir', type=str, default='checkpoints', help='Directory for checkpoints')
-    parser.add_argument('--log_dir', type=str, default='checkpoints/tensorboard', help='Directory for logs')
+
+    # 先解析一次已知参数（只解析已定义的）
+    args, _ = parser.parse_known_args()
+    # 用已解析的 checkpoint_dir 设置 log_dir 默认值
+    default_log_dir = os.path.join(args.checkpoint_dir, "logs")
+    parser.add_argument('--log_dir', type=str, default=default_log_dir, help='Directory for logs')
+
     parser.add_argument('--seq_length', type=int, default=512, help='Sequence length')
     parser.add_argument('--batch_size', type=int, default=32, help='Batch size')
     parser.add_argument('--num_epochs', type=int, default=50, help='Number of epochs')
@@ -443,7 +534,9 @@ def main():
         val_loader=val_loader,
         learning_rate=args.lr, # learning_rate 会被 resume 覆盖
         checkpoint_dir=args.checkpoint_dir,
-        vis=TrainVisualizer(log_dir = args.log_dir, log_interval=args.log_interval)
+        vis=TrainVisualizer(log_dir = args.log_dir, log_interval=args.log_interval),
+        pad_token_id=tokenizer.pad_token_id,
+        mask_token_id=tokenizer.vocab_size
     )
     
     # Resume from checkpoint if requested

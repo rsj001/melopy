@@ -11,7 +11,7 @@ from torch.utils.tensorboard import SummaryWriter
 import numpy as np
 
 class TrainVisualizer:
-    def __init__(self, log_dir="checkpoints/tensorboard", sample_rate=16000, fps=100,
+    def __init__(self, log_dir, sample_rate=16000, fps=100,
                  max_audio_seconds=20, ema_decay=0.98, log_interval = 500):
         """
         ema_decay 用于平滑曲线，例如 avg_loss。

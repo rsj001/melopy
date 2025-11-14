@@ -2,11 +2,66 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+class TokenEmbedding(nn.Module): # hardcode for token ranges, remember to update if tokenizer changes
+    def __init__(self, vocab_size, d_model, padding_idx):
+        super().__init__()
+        self.token_embed = nn.Embedding(vocab_size + 1, d_model, padding_idx=padding_idx) # MASK
+        self.type_embed = nn.Embedding(5, d_model, padding_idx=0)  # pad, pitch on/off, time, velocity
+        # 每种连续类型一个小 MLP
+
+    def forward(self, token_ids):
+        """
+        token_ids: [batch, seq_len]
+        """
+        type_ids = torch.zeros_like(token_ids)
+        mask1 = (token_ids >= 3) & (token_ids <= 51)      # Note On
+        mask2 = (token_ids >= 52) & (token_ids <= 100)    # Note Off
+        mask3 = (token_ids >= 101) & (token_ids <= 200)   # Time
+        mask4 = (token_ids >= 201) & (token_ids <= 232)   # Velocity
+        type_ids[mask1] = 1
+        type_ids[mask2] = 2
+        type_ids[mask3] = 3
+        type_ids[mask4] = 4
+        return self.token_embed(token_ids) + self.type_embed(type_ids)
+
+class RotaryEmbedding(nn.Module):
+    """Rotary Positional Embedding."""
+
+    def __init__(self, dim: int, base: int = 10000, max_seq_len: int = 512):
+        super().__init__()
+        self.dim = dim
+        self.base = base
+
+        position = torch.arange(max_seq_len, dtype=torch.float32)
+        dim_half = torch.arange(0, dim // 2, dtype=torch.float32)
+        freqs = 1.0 / (base ** (dim_half / (dim // 2)))
+        angles = torch.einsum('p,d->pd', position, freqs)
+
+        sin, cos = torch.sin(angles), torch.cos(angles)
+        self.register_buffer("sin", sin, persistent=False)
+        self.register_buffer("cos", cos, persistent=False)
+
+    def forward(self, x: torch.Tensor):
+        """
+        Args:
+            x: (batch, heads, seq_len, head_dim)
+        """
+        seq_len = x.size(-2)
+        sin, cos = self.sin[:seq_len, :], self.cos[:seq_len, :]
+        sin, cos = sin.unsqueeze(0).unsqueeze(0), cos.unsqueeze(0).unsqueeze(0)
+
+        x1 = x[..., ::2]
+        x2 = x[..., 1::2]
+
+        x_out = torch.zeros_like(x)
+        x_out[..., ::2] = x1 * cos - x2 * sin
+        x_out[..., 1::2] = x1 * sin + x2 * cos
+        return x_out
 
 class MultiHeadAttention(nn.Module):
-    """Multi-head self-attention with causal masking."""
-    
-    def __init__(self, d_model: int, num_heads: int, dropout: float = 0.1):
+    """Multi-head self-attention with RoPE and causal masking."""
+
+    def __init__(self, d_model: int, num_heads: int, dropout: float = 0.1, max_seq_len: int = 512):
         super().__init__()
         assert d_model % num_heads == 0
         
@@ -19,16 +74,28 @@ class MultiHeadAttention(nn.Module):
         self.dropout = nn.Dropout(dropout)
         
         self.scale = self.head_dim ** -0.5
-    
-    def forward(self, x, mask=None):
+
+        # 集成 RoPE
+        # self.rope = RotaryEmbedding(self.head_dim, max_seq_len=max_seq_len)
+
+    def forward(self, x: torch.Tensor, mask: torch.Tensor | None = None) -> torch.Tensor:
+        """
+        Args:
+            x: (batch, seq_len, d_model)
+            mask: (batch, seq_len, seq_len) or None
+        """
         batch_size, seq_len, d_model = x.shape
-        
+
         # Project to Q, K, V
         qkv = self.qkv_proj(x)
         qkv = qkv.reshape(batch_size, seq_len, 3, self.num_heads, self.head_dim)
-        qkv = qkv.permute(2, 0, 3, 1, 4)  # (3, batch, heads, seq, head_dim)
+        qkv = qkv.permute(2, 0, 3, 1, 4)  # (3, batch, heads, seq_len, head_dim)
         q, k, v = qkv[0], qkv[1], qkv[2]
-        
+
+        # === Apply RoPE ===
+        # q = self.rope(q)
+        # k = self.rope(k)
+
         # Attention scores
         attn = torch.matmul(q, k.transpose(-2, -1)) * self.scale
         
@@ -62,9 +129,9 @@ class FeedForward(nn.Module):
 class TransformerBlock(nn.Module):
     """Transformer decoder block with causal self-attention."""
     
-    def __init__(self, d_model: int, num_heads: int, d_ff: int, dropout: float = 0.1):
+    def __init__(self, d_model: int, num_heads: int, d_ff: int, dropout: float = 0.1, max_seq_len: int = 512):
         super().__init__()
-        self.attention = MultiHeadAttention(d_model, num_heads, dropout)
+        self.attention = MultiHeadAttention(d_model, num_heads, dropout, max_seq_len=max_seq_len)
         self.feed_forward = FeedForward(d_model, d_ff, dropout)
         self.norm1 = nn.LayerNorm(d_model)
         self.norm2 = nn.LayerNorm(d_model)
@@ -106,14 +173,15 @@ class MIDITransformer(nn.Module):
         self.pad_token_id = pad_token_id
         
         # Token embedding
-        self.token_embedding = nn.Embedding(vocab_size, d_model, padding_idx=pad_token_id)
+        self.token_embedding = TokenEmbedding(vocab_size, d_model, padding_idx=pad_token_id)
+        # self.token_embedding = nn.Embedding(vocab_size + 1, d_model, padding_idx=pad_token_id) # MASK TOKEN
         
         # Positional encoding
-        self.pos_embedding = nn.Parameter(torch.zeros(1, max_seq_length, d_model))
+        # self.pos_embedding = nn.Parameter(torch.zeros(1, max_seq_length, d_model))
         
         # Transformer blocks
         self.blocks = nn.ModuleList([
-            TransformerBlock(d_model, num_heads, d_ff, dropout)
+            TransformerBlock(d_model, num_heads, d_ff, dropout, max_seq_len=max_seq_length)
             for _ in range(num_layers)
         ])
         
@@ -147,7 +215,7 @@ class MIDITransformer(nn.Module):
                 torch.nn.init.ones_(module.weight)
         
         # Initialize positional embeddings
-        nn.init.normal_(self.pos_embedding, mean=0.0, std=0.02)
+        # nn.init.normal_(self.pos_embedding, mean=0.0, std=0.02)
     
     def forward(self, input_ids, targets=None):
         """
@@ -164,7 +232,7 @@ class MIDITransformer(nn.Module):
         
         # Token embeddings + positional embeddings
         x = self.token_embedding(input_ids)
-        x = x + self.pos_embedding[:, :seq_len, :]
+        # x = x + self.pos_embedding[:, :seq_len, :]
         x = self.dropout(x)
         
         # Get causal mask

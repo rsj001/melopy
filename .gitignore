@@ -13,4 +13,5 @@ __pycache__
 *.pth
 *.json
 
-experiments/
+experiments*/
+events.out.tfevents*
