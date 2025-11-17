@@ -30,8 +30,10 @@ A PyTorch-based Decoder-only GPT model for autoregressive generation of piano MI
    - PyTorch
    - tensorboard
    - mido
+   - pretty_midi
    - tqdm
    - pyfluidsynth (with libs)
+   - matplotlib
 3. Pre-process data with example_preprocess.sh
 4. Train with example_train.sh
 5. Generate with example_generate_with_prompt.sh
