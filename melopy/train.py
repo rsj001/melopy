@@ -15,7 +15,7 @@ import random
 
 from tokenizer import MIDITokenizer
 from dataset import MIDIDataset, get_midi_files
-from model import MIDITransformer
+from model import MIDITransformer, UncertaintyLossWrapper
 from visualizer import TrainVisualizer
 
 
@@ -32,6 +32,7 @@ class Trainer:
         device: str = 'cuda' if torch.cuda.is_available() else 'cpu',
         checkpoint_dir: str = 'checkpoints',
         vis: Optional[TrainVisualizer] = None,
+        num_tasks: int = 5,
     ):
         self.model = model.to(device)
         self.train_loader = train_loader
@@ -39,17 +40,24 @@ class Trainer:
         self.device = device
         self.checkpoint_dir = checkpoint_dir
         self.vis = vis
+        self.num_tasks = num_tasks
 
+        self.uncertainty = UncertaintyLossWrapper(num_tasks, device)
         
         os.makedirs(checkpoint_dir, exist_ok=True)
         
         # Optimizer
-        self.optimizer = torch.optim.AdamW(
-            model.parameters(),
-            lr=learning_rate,
-            weight_decay=weight_decay,
-            betas=(0.9, 0.95)
-        )
+        self.optimizer = torch.optim.AdamW([{
+            'params': model.parameters(),
+            'lr': learning_rate,          # 主模型使用较小的学习率
+            'weight_decay': weight_decay,
+            'betas':(0.9, 0.98),
+        },{
+            'params': self.uncertainty.parameters(),
+            'lr': learning_rate / 10.0,
+            'weight_decay': 0.0,    # 通常不对log_vars使用权重衰减
+            'betas':(0.9, 0.95),
+        }])
         
         # Learning rate scheduler
         self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
@@ -76,7 +84,9 @@ class Trainer:
             
             # Forward pass
             output = self.model(input_ids, target_ids)
-            logits, loss = output
+            logits, losses = output
+            
+            loss = self.uncertainty(losses)
             
             # Backward pass
             self.optimizer.zero_grad()
@@ -84,14 +94,15 @@ class Trainer:
             
             # Gradient clipping
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+            torch.nn.utils.clip_grad_norm_(self.uncertainty.parameters(), max_norm=0.1)
             
             self.optimizer.step()
             self.scheduler.step()
             
             with torch.no_grad():
-                pred_ids = torch.argmax(logits, dim=-1)
-                correct = (pred_ids == target_ids).float()
-                accuracy = correct.mean().item()
+                # pred_ids = torch.argmax(logits, dim=-1)
+                # correct = (pred_ids == target_ids).float()
+                # accuracy = correct.mean().item()
 
                 # Update metrics
                 total_loss += loss.item()
@@ -100,7 +111,7 @@ class Trainer:
                 # Update progress bar
                 pbar.set_postfix({
                     'loss': f'{loss.item():.4f}',
-                    'acc': f'{accuracy:.4f}',
+                    # 'acc': f'{accuracy:.4f}',
                     'lr': f'{self.scheduler.get_last_lr()[0]:.6f}'
                 })
 
@@ -109,9 +120,10 @@ class Trainer:
                     if self.global_step % self.vis.log_interval == 0:
                         self.vis.log_loss(loss.item(), self.global_step)
                         self.vis.log_lr(self.optimizer, self.global_step)
+                        self.vis.log_grad_norm(self.uncertainty, self.global_step, name = 'uncertainty_grad_norm')
                         self.vis.log_grad_norm(self.model, self.global_step)
                         self.vis.log_loss(total_loss / (batch_idx + 1), self.global_step, prefix="train", name="avg_loss")
-                        self.vis.log_loss(accuracy, self.global_step, prefix="train", name="accuracy")
+                        # self.vis.log_loss(accuracy, self.global_step, prefix="train", name="accuracy")
 
         
         avg_loss = total_loss / len(self.train_loader)
@@ -132,8 +144,8 @@ class Trainer:
                 target_ids = batch['target_ids'].to(self.device)
                 
                 output = self.model(input_ids, target_ids)
-                logits, loss = output
-                total_loss += loss.item()
+                logits, losses = output
+                total_loss += self.uncertainty(losses)
         
         avg_loss = total_loss / len(self.val_loader)
 
@@ -146,6 +158,8 @@ class Trainer:
     def save_checkpoint(self, filename):
         """Save model checkpoint."""
         checkpoint = {
+            'uncertainty_state_dict': self.uncertainty.state_dict(),
+
             'epoch': self.epoch,
             'global_step': self.global_step,
             'model_state_dict': self.model.state_dict(),
@@ -168,6 +182,7 @@ class Trainer:
         
         checkpoint = torch.load(path, map_location=self.device)
         self.model.load_state_dict(checkpoint['model_state_dict'])
+        self.uncertainty.load_state_dict(checkpoint['uncertainty_state_dict'])
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
         self.epoch = checkpoint['epoch']
@@ -242,14 +257,6 @@ def main():
         help='Path(s) to preprocessed .pth dataset files with weights(e.g., data/train.pth:1.0)'
     )
 
-    parser.add_argument(
-        '--pitch_augmentation',
-        type=int,
-        default=[0],
-        nargs='+',
-        help='Data augmentation by pitch shifting. Provide a list of integers (e.g., -2 0 2)'
-    )
-
     parser.add_argument('--val_data_dir', type=str, default='data/val', help='Directory containing MIDI files (val)')
     parser.add_argument('--checkpoint_dir', type=str, default='checkpoints', help='Directory for checkpoints')
 
@@ -294,12 +301,11 @@ def main():
         default=None, # 如果不写 --resume，就是 None，啊啊啊烦死了
         help='Resume from checkpoint'
     )
-    
+
     parser.add_argument('--piano_channels', type=str, default='0,1,2,3,4,5', help='Comma-separated list of MIDI channels for piano (default: 0)')
 
     # only chunk_stride data_dir_with_weights seq_length piano_channels matters in preprocessing
     # TODO: 把训练逻辑和预处理分开
-
     args = parser.parse_args()
     
     # Parse piano channels
@@ -307,30 +313,23 @@ def main():
     
     # Initialize tokenizer
     print("Initializing tokenizer...")
-    tokenizer = MIDITokenizer(
-        min_pitch=36,  # C2
-        max_pitch=84,  # C7
-        num_velocity_bins=32,
-        max_time_shift=100,
-        time_shift_resolution=10
-    )
-    
+    tokenizer = MIDITokenizer() # go default, check tokenizer.py for params
+
     print(f"Vocabulary size: {tokenizer.vocab_size}")
-    
+    print(f"Total Size: {tokenizer.vocab_size_full}")
     # Save tokenizer config
     os.makedirs(args.checkpoint_dir, exist_ok=True)
     tokenizer_config = {
         'min_pitch': tokenizer.min_pitch,
         'max_pitch': tokenizer.max_pitch,
-        'num_velocity_bins': tokenizer.num_velocity_bins,
-        'max_time_shift': tokenizer.max_time_shift,
-        'time_shift_resolution': tokenizer.time_shift_resolution,
-        'vocab_size': tokenizer.vocab_size
+        'velocity_bins': tokenizer.velocity_bins,
+        'duration_bins': tokenizer.duration_bins,
+        'time_shift_bins': tokenizer.time_shift_bins,
+        'version': tokenizer.version
     }
     with open(os.path.join(args.checkpoint_dir, 'tokenizer_config.json'), 'w') as f:
         json.dump(tokenizer_config, f, indent=2)
     
-
     if args.load_pth_with_weights is not None:
         if args.preprocess_dataset_as is not None:
             parser.error("--load_pth_with_weights conflicted with --preprocess_dataset_as")
@@ -370,7 +369,7 @@ def main():
             midi_files += cur_midi_files
         if args.debug:
             if len(midi_files) > args.debug:
-                print(f"Training dataset trimmed from {len(midi_files)} to {args.debug}")
+                print(f"Debug Option: Training set trimmed from {len(midi_files)} to {args.debug} files.")
                 debug_list = random.sample(midi_files, args.debug)
                 midi_files = debug_list
         if len(midi_files) == 0:
@@ -386,7 +385,6 @@ def main():
             seq_length=args.seq_length,
             piano_channels=piano_channels,
             stride=args.chunk_stride,
-            pitch_augmentation=args.pitch_augmentation
         )
         if len(dataset) == 0:
             print("No sequences created from MIDI files. Check your data.")
@@ -437,14 +435,15 @@ def main():
     # Initialize model
     print("Initializing model...")
     model = MIDITransformer(
-        vocab_size=tokenizer.vocab_size,
+        vocab_size=list(tokenizer.vocab_size.values()),
         d_model=args.d_model,
         num_layers=args.num_layers,
         num_heads=args.num_heads,
         d_ff=args.d_model * 4,
         max_seq_length=args.seq_length,
         dropout=0.1,
-        pad_token_id=tokenizer.pad_token_id
+        pad_token_id=0
+        # 严格意义上这不是 token
     )
     
     # Initialize trainer

@@ -1,88 +1,154 @@
 import mido
 from typing import List, Optional
+from mido import MidiFile, MidiTrack, MetaMessage, bpm2tempo
+
+const_log_bin = [0, 5, 10, 15] + \
+    [i for i in range(20, 400, 10)] + \
+        [i for i in range(400, 1000, 40)] + \
+            [i for i in range(1000, 2000, 100)] + \
+                [i for i in range(2000, 3000, 200)] + \
+                    [i for i in range(3000, 4200, 300)] + \
+                        [i for i in range(4200, 6000, 400)]
 
 class MIDITokenizer:
     """
     Granular tokenizer for MIDI events.
     Vocabulary includes:
-    - NOTE_ON events (pitch-specific)
-    - NOTE_OFF events (pitch-specific)
+    - NOTE_PITCH events (pitch-specific)
     - TIME_SHIFT events (quantized time delays)
     - VELOCITY bins (quantized velocities)
+    - DURATION bins (quantized note durations)
     - Special tokens (PAD, BOS, EOS)
     """
     
     def __init__(
         self,
-        min_pitch: int = 36,  # C2
-        max_pitch: int = 84,  # C7
-        num_velocity_bins: int = 32,
-        max_time_shift: int = 100,
-        time_shift_resolution: int = 10,  # milliseconds per time shift unit
+        min_pitch: int = 12,  # C0
+        max_pitch: int = 109,  # C9
+        velocity_bins: List[int] = [i for i in range(1, 128, 4)],
+        duration_bins: List[int] = const_log_bin,
+        time_shift_bins: List[int] = const_log_bin,
     ):
         self.min_pitch = min_pitch
         self.max_pitch = max_pitch
-        self.num_velocity_bins = num_velocity_bins
-        self.max_time_shift = max_time_shift
-        self.time_shift_resolution = time_shift_resolution
-        
-        self._build_vocabulary()
-    
-    def _build_vocabulary(self):
-        """Build the token vocabulary."""
+        self.velocity_bins = velocity_bins
+        self.duration_bins = duration_bins
+        self.time_shift_bins = time_shift_bins
+        self.version = "1.1"
+
         self.token_to_id = {}
         self.id_to_token = {}
-        
         current_id = 0
-        
         # Special tokens
-        for token in ['<PAD>', '<BOS>', '<EOS>']:
-            self.token_to_id[token] = current_id
-            self.id_to_token[current_id] = token
-            current_id += 1
+
+        self.vocab_full = {"special": ['<PAD>', '<BOS>', '<EOS>', '<NOTE>', '<MASK>'],
+                      "note": ['<PAD>'] + [f'NOTE_{pitch}' for pitch in range(self.min_pitch, self.max_pitch + 1)],
+                      "duration": ['<PAD>'] + [f'DURATION_{dur_bin}' for dur_bin in duration_bins],
+                      "velocity": ['<PAD>'] + [f'VELOCITY_{vel_bin}' for vel_bin in velocity_bins],
+                      "time_shift": ['<PAD>'] + [f'TIME_SHIFT_{shift}' for shift in time_shift_bins],
+                      }
+                      
+        for category, tokens in self.vocab_full.items():
+            self.token_to_id[category] = {}
+            self.id_to_token[category] = {}
+            current_id = 0
+            for token in tokens:
+                self.token_to_id[category][token] = current_id
+                self.id_to_token[category][current_id] = token
+                current_id += 1
         
-        # NOTE_ON tokens (for each pitch in range)
-        for pitch in range(self.min_pitch, self.max_pitch + 1):
-            token = f'NOTE_ON_{pitch}'
-            self.token_to_id[token] = current_id
-            self.id_to_token[current_id] = token
-            current_id += 1
-        
-        # NOTE_OFF tokens (for each pitch in range)
-        for pitch in range(self.min_pitch, self.max_pitch + 1):
-            token = f'NOTE_OFF_{pitch}'
-            self.token_to_id[token] = current_id
-            self.id_to_token[current_id] = token
-            current_id += 1
-        
-        # TIME_SHIFT tokens
-        for shift in range(1, self.max_time_shift + 1):
-            token = f'TIME_SHIFT_{shift}'
-            self.token_to_id[token] = current_id
-            self.id_to_token[current_id] = token
-            current_id += 1
-        
-        # VELOCITY tokens
-        for vel_bin in range(self.num_velocity_bins):
-            token = f'VELOCITY_{vel_bin}'
-            self.token_to_id[token] = current_id
-            self.id_to_token[current_id] = token
-            current_id += 1
-        
-        self.vocab_size = current_id
-        self.pad_token_id = self.token_to_id['<PAD>']
-        self.bos_token_id = self.token_to_id['<BOS>']
-        self.eos_token_id = self.token_to_id['<EOS>']
-    
-    def velocity_to_bin(self, velocity: int) -> int:
-        """Convert MIDI velocity (0-127) to velocity bin."""
-        return min(int(velocity / 127 * self.num_velocity_bins), self.num_velocity_bins - 1)
-    
-    def bin_to_velocity(self, bin_id: int) -> int:
-        """Convert velocity bin to MIDI velocity."""
-        return int((bin_id + 0.5) * 127 / self.num_velocity_bins)
-    
-    def encode_midi(self, midi_path: str, piano_channels: Optional[List[int]] = None, pitch_augmentation: int = 0, force_pitch: bool = False) -> List[int]:
+        self.vocab_size = {cat: len(toks) for cat, toks in self.vocab_full.items()}
+        self.vocab_size_full = sum(self.vocab_size.values())
+
+        self.bos_token_id = (self.token_to_id['special']['<BOS>'],
+                    self.token_to_id['note']['<PAD>'],
+                    self.token_to_id['duration']['<PAD>'],
+                    self.token_to_id['velocity']['<PAD>'],
+                    self.token_to_id['time_shift']['<PAD>'])
+        self.eos_token_id = (self.token_to_id['special']['<EOS>'],
+                    self.token_to_id['note']['<PAD>'],
+                    self.token_to_id['duration']['<PAD>'],
+                    self.token_to_id['velocity']['<PAD>'],
+                    self.token_to_id['time_shift']['<PAD>'])
+
+    def unify_bpm_by_ticks(self, in_path: str, target_bpm: float = 120) -> MidiFile:
+        mid = MidiFile(in_path)
+        tpb = mid.ticks_per_beat
+        target_tempo = bpm2tempo(target_bpm)
+        # ----------------------------------------------------------
+        # 1. Build tempo map (absolute_ticks, tempo)
+        # ----------------------------------------------------------
+        tempo_events = [(0, 500000)]   # default tempo
+        for track in mid.tracks:
+            abs_t = 0
+            for msg in track:
+                abs_t += msg.time
+                if msg.type == "set_tempo":
+                    tempo_events.append((abs_t, msg.tempo))
+        tempo_events.sort()
+        # ----------------------------------------------------------
+        # Build cumulative seconds at each tempo change
+        # ----------------------------------------------------------
+        segs = []
+        cum_seconds = 0.0
+        for i in range(len(tempo_events)):
+            t0, tempo = tempo_events[i]
+            if i + 1 < len(tempo_events):
+                t1 = tempo_events[i + 1][0]
+            else:
+                t1 = None  # until infinity
+            segs.append((t0, t1, tempo, cum_seconds))
+            if t1 is not None:
+                dt_ticks = t1 - t0
+                cum_seconds += dt_ticks * tempo / (1e6 * tpb)
+        # ----------------------------------------------------------
+        def ticks_to_seconds(tick):
+            """Fast piecewise conversion"""
+            for t0, t1, tempo, base_sec in segs:
+                if t1 is None or tick < t1:
+                    return base_sec + (tick - t0) * tempo / (1e6 * tpb)
+            raise ValueError("out of range, segs empty?")
+        # ----------------------------------------------------------
+        def seconds_to_ticks(sec):
+            """Constant-tempo conversion"""
+            return int(round(sec * 1e6 * tpb / target_tempo))
+        # ----------------------------------------------------------
+        # 2. For each track convert absolute ticks → seconds → new ticks
+        # ----------------------------------------------------------
+        new_tracks = []
+        for track in mid.tracks:
+            abs_t = 0
+            events = []
+            for msg in track:
+                abs_t += msg.time
+                sec = ticks_to_seconds(abs_t)
+                new_abs = seconds_to_ticks(sec)
+                events.append((new_abs, msg))
+            # rebuild track with fresh delta times
+            events.sort(key=lambda x: x[0])
+            nt = MidiTrack()
+            last = 0
+            for abs_tk, msg in events:
+                dt = abs_tk - last
+                last = abs_tk
+                # remove tempo events; we will add our own
+                if msg.type == "set_tempo":
+                    continue
+                nt.append(msg.copy(time=dt))
+            new_tracks.append(nt)
+        # ----------------------------------------------------------
+        # 3. Build output MIDI
+        # ----------------------------------------------------------
+        out = MidiFile(ticks_per_beat=tpb)
+        for i, tr in enumerate(new_tracks):
+            nt = MidiTrack()
+            if i == 0:
+                nt.append(MetaMessage("set_tempo", tempo=target_tempo, time=0))
+            nt.extend(tr)
+            out.tracks.append(nt)
+
+        return out
+    def encode_midi(self, midi_path: str, piano_channels: Optional[List[int]] = None) -> List[tuple]:
         """
         Encode a MIDI file to a sequence of token IDs.
         
@@ -93,187 +159,114 @@ class MIDITokenizer:
         Returns:
             List of token IDs
         """
-        mid = mido.MidiFile(midi_path)
+
+        # assume 120 BPM preprocessing is done elsewhere
+        mid = self.unify_bpm_by_ticks(midi_path, 120)
+
+        zoom_ratio = 480.0 / mid.ticks_per_beat
+        if mid.ticks_per_beat == 480:
+            zoom_ratio = 1
         
         if piano_channels is None:
             piano_channels = list(range(16))
         
-        # Track tempo changes for accurate time conversion
-        # Start with default MIDI tempo (120 BPM = 500000 microseconds per beat)
-        default_tempo = 500000
-        tempo_map = [(0, default_tempo)]
-
-        max_pitch = 0
-        min_pitch = 100
-        
-        # First pass: build tempo map from set_tempo events
-        for track in mid.tracks:
-            track_time = 0
-            for msg in track:
-                track_time += msg.time
-                if msg.type == 'set_tempo':
-                    tempo_map.append((track_time, msg.tempo))
-                    # print(f"Tick #{track_time} Tempo: {msg.tempo} ms/beat")
-                if msg.type == 'note_on' and msg.velocity > 0:
-                    max_pitch = max(max_pitch, msg.note)
-                    min_pitch = min(min_pitch, msg.note)
-
-        def legal_interval(min_p, max_p):
-            return max_pitch <= self.max_pitch and min_pitch >= self.min_pitch
-        
-        pitch_offset = 0
-        if not legal_interval(min_pitch, max_pitch):
-            if legal_interval(min_pitch - 12, max_pitch - 12):
-                pitch_offset = -12
-            elif legal_interval(min_pitch + 12, max_pitch + 12):
-                pitch_offset = 12
-            else:
-                pitch_offset =  ((self.max_pitch + self.min_pitch) - (max_pitch + min_pitch)) // 2
-
-        if pitch_augmentation != 0:
-            if force_pitch or legal_interval(min_pitch + pitch_offset + pitch_augmentation, max_pitch + pitch_offset + pitch_augmentation):
-                pitch_offset += pitch_augmentation
-            else:
-                return []
-        
-        # Sort by time in case tracks have tempo events at different positions
-        tempo_map.sort(key=lambda x: x[0])
-        
-        def ticks_to_ms(ticks: int, ticks_per_beat: int) -> int:
-            """Convert MIDI ticks to milliseconds using tempo map."""
-            if ticks == 0:
-                return 0
-            
-            ms = 0
-            current_ticks = 0
-            current_tempo = tempo_map[0][1]
-            
-            for i, (tempo_ticks, new_tempo) in enumerate(tempo_map):
-                if tempo_ticks >= ticks:
-                    delta_ticks = ticks - current_ticks
-                    ms += int(delta_ticks * current_tempo / ticks_per_beat / 1000)
-                    return ms
-                else:
-                    delta_ticks = tempo_ticks - current_ticks
-                    ms += int(delta_ticks * current_tempo / ticks_per_beat / 1000)
-                    current_ticks = tempo_ticks
-                    current_tempo = new_tempo
-            
-            delta_ticks = ticks - current_ticks
-            ms += int(delta_ticks * current_tempo / ticks_per_beat / 1000)
-            return ms
-        
-        # Extract note events with absolute timing
         events = []
-        
         for track in mid.tracks:
-            track_time = 0
+            note_last_on = [-1] * 130
+            abs_time = 0
             for msg in track:
-                track_time += msg.time
+                abs_time += msg.time * zoom_ratio
+                if msg.type not in ["note_on", "note_off"]:
+                    pass
+                elif msg.velocity == 0 or msg.type == 'note_off':
+                    if msg.channel not in piano_channels:
+                        continue
+                    pitch = msg.note
+                    if note_last_on[pitch] != -1:
+                        events[note_last_on[pitch]][1] = abs_time - events[note_last_on[pitch]][1]
+                        note_last_on[pitch] = -1
+                else:
+                    if msg.channel not in piano_channels:
+                        continue
+                    pitch = msg.note
+                    events.append([pitch, abs_time, msg.velocity, abs_time])
+                    if note_last_on[pitch] != -1:
+                        events[note_last_on[pitch]][1] = abs_time - events[note_last_on[pitch]][1]
+                    note_last_on[pitch] = len(events) - 1
 
-                if msg.type == 'note_on' and msg.channel in piano_channels:
-                    new_pitch = msg.note + pitch_offset
-                    if self.min_pitch <= new_pitch <= self.max_pitch:
-                        events.append({
-                            'type': 'note_on' if msg.velocity > 0 else 'note_off',
-                            'pitch': new_pitch,
-                            'velocity': msg.velocity,
-                            'time_ticks': track_time
-                        })
-                elif msg.type == 'note_off' and msg.channel in piano_channels:
-                    new_pitch = msg.note + pitch_offset
-                    if self.min_pitch <= new_pitch <= self.max_pitch:
-                        events.append({
-                            'type': 'note_off',
-                            'pitch': new_pitch,
-                            'velocity': 0,
-                            'time_ticks': track_time
-                        })
+        events.sort(key=lambda x: x[3])
+        for i in range(len(events)-1,0,-1):
+            events[i][3] = events[i][3] - events[i - 1][3]
         
-        # Sort events by time_ticks
-        events.sort(key=lambda x: x['time_ticks'])
-        
-        tokens = [self.bos_token_id]
-        prev_time_ms = 0
-        
+        maxm = 0
+        maxd = 0
+        def quantize(value, bins):
+            return bins[min(range(len(bins)), key=lambda x: abs(bins[x]-value))]
+        for i in range(len(events)):
+            maxm = max(maxm, events[i][3])
+            maxd = max(maxd, events[i][1])
+            events[i][1] = quantize(events[i][1], self.duration_bins)
+            events[i][2] = quantize(events[i][2], self.velocity_bins)
+            events[i][3] = quantize(events[i][3], self.time_shift_bins)
+        # print("max delta time:", maxm)
+        # print("max duration:", maxd)
+
+        token_ids = [self.bos_token_id]
         for event in events:
-            # Convert ticks to milliseconds
-            event_time_ms = ticks_to_ms(event['time_ticks'], mid.ticks_per_beat)
-            time_diff_ms = event_time_ms - prev_time_ms
-            
-            # Emit time shift tokens if needed
-            if time_diff_ms > 0:
-                time_units = time_diff_ms // self.time_shift_resolution
-                
-                # shorten too long time_units
-                if time_units > self.max_time_shift * 5:
-                    time_units = self.max_time_shift * 5
-                
-                while time_units > 0:
-                    shift = min(time_units, self.max_time_shift)
-                    tokens.append(self.token_to_id[f'TIME_SHIFT_{shift}'])
-                    time_units -= shift
-            
-            # Emit velocity token for note_on events
-            if event['type'] == 'note_on' and event['velocity'] > 0:
-                vel_bin = self.velocity_to_bin(event['velocity'])
-                tokens.append(self.token_to_id[f'VELOCITY_{vel_bin}'])
-                tokens.append(self.token_to_id[f'NOTE_ON_{event["pitch"]}'])
-            elif event['type'] == 'note_off':
-                tokens.append(self.token_to_id[f'NOTE_OFF_{event["pitch"]}'])
-            
-            prev_time_ms = event_time_ms
-        
-        tokens.append(self.eos_token_id)
-        return tokens
+            pitch, duration, velocity, delta_time = event
+            if duration < 10:
+                pass # print(f"Detected duration: {duration}, which is weird.")
+            if pitch < self.min_pitch or pitch > self.max_pitch:
+                continue
+            token_ids.append((
+                self.token_to_id['special']['<NOTE>'],
+                self.token_to_id['note'][f'NOTE_{pitch}'],
+                self.token_to_id['duration'][f'DURATION_{duration}'],
+                self.token_to_id['velocity'][f'VELOCITY_{velocity}'],
+                self.token_to_id['time_shift'][f'TIME_SHIFT_{delta_time}']
+            ))
+        token_ids.append(self.eos_token_id)
+        return token_ids
     
-    def decode_to_midi(self, token_ids: List[int], output_path: str, tempo: int = 500000):
+    def decode_to_midi(self, token_ids: List[tuple], output_path: str):
         """
-        Decode token IDs to a MIDI file.
+        Decode a sequence of token IDs back to a MIDI file.
         
         Args:
             token_ids: List of token IDs
-            output_path: Path to save MIDI file
-            tempo: Microseconds per quarter note
+            output_path: Path to save the decoded MIDI file
         """
         mid = mido.MidiFile()
         track = mido.MidiTrack()
-        mid.tracks.append(track)
-        
-        track.append(mido.MetaMessage('set_tempo', tempo=tempo, time=0))
-        
-        current_time = 0
-        current_velocity = 64  # Default velocity
-        
-        for token_id in token_ids:
-            if token_id >= self.vocab_size:
-                continue
-                
-            token = self.id_to_token[token_id]
-            
-            if token.startswith('TIME_SHIFT_'):
-                shift = int(token.split('_')[-1])
-                current_time += shift * self.time_shift_resolution
-            
-            elif token.startswith('VELOCITY_'):
-                vel_bin = int(token.split('_')[-1])
-                current_velocity = self.bin_to_velocity(vel_bin)
-            
-            elif token.startswith('NOTE_ON_'):
-                pitch = int(token.split('_')[-1])
-                beats = (current_time / 1000) / (tempo / 1_000_000)  # current_time -> beats formula
-                ticks = int(beats * mid.ticks_per_beat)
-                track.append(mido.Message('note_on', note=pitch, velocity=current_velocity, time=ticks, channel=0))
-                current_time = 0
 
-            elif token.startswith('NOTE_OFF_'):
-                pitch = int(token.split('_')[-1])
-                beats = (current_time / 1000) / (tempo / 1_000_000)
-                ticks = int(beats * mid.ticks_per_beat)
-                track.append(mido.Message('note_off', note=pitch, velocity=0, time=ticks, channel=0))
-                current_time = 0
-        
+        events = []
+        for token in token_ids:
+            special, pitch, duration, velocity, delta_time = token
+            if self.id_to_token['special'][special] == '<EOS>':
+                break
+            if self.id_to_token['note'][pitch] == '<PAD>':
+                continue
+            pitch = int(self.id_to_token['note'][pitch].split('_')[-1])
+            duration = int(self.id_to_token['duration'][duration].split('_')[-1])
+            velocity = int(self.id_to_token['velocity'][velocity].split('_')[-1])
+            delta_time = int(self.id_to_token['time_shift'][delta_time].split('_')[-1])
+            events.append((pitch, duration, velocity, delta_time))
+
+        rev = []
+        abs_time = 0
+        for i in events:
+            pitch, duration, velocity, delta_time = i
+            abs_time += delta_time
+            rev.append((pitch, duration, velocity, abs_time))
+            rev.append((pitch, duration, 0, abs_time + duration))
+        rev.sort(key=lambda x: x[3])
+
+        prev_time = 0
+        for token in rev:
+            pitch, duration, velocity, abs_time = token
+            track.append(mido.Message('note_on', note=pitch, velocity=velocity, time=abs_time-prev_time))
+            prev_time = abs_time
+        mid.tracks.append(track)
         mid.save(output_path)
-    
     def __len__(self):
         return self.vocab_size

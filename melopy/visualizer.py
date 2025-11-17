@@ -58,7 +58,7 @@ class TrainVisualizer:
 
         self.writer.add_scalar(f"{prefix}/{name}_ema", new, step)
 
-    def log_grad_norm(self, model, step, prefix="train"):
+    def log_grad_norm(self, model, step, prefix="train", name = "grad_norm"):
         """
         自动统计梯度 L2 范数，并记录 mean/max 两个指标。
         """
@@ -78,9 +78,9 @@ class TrainVisualizer:
         mean_norm = np.mean(norms)
         max_norm = np.max(norms)
 
-        self.writer.add_scalar(f"{prefix}/grad_norm/total", total_norm, step)
-        self.writer.add_scalar(f"{prefix}/grad_norm/mean", mean_norm, step)
-        self.writer.add_scalar(f"{prefix}/grad_norm/max", max_norm, step)
+        self.writer.add_scalar(f"{prefix}/{name}/total", total_norm, step)
+        self.writer.add_scalar(f"{prefix}/{name}/mean", mean_norm, step)
+        self.writer.add_scalar(f"{prefix}/{name}/max", max_norm, step)
 
     # ---------------------------------------------------------
     # MIDI Visuals
@@ -106,10 +106,10 @@ class TrainVisualizer:
         if pianoroll.max() > 0:
             pianoroll /= pianoroll.max()
 
-        fig, ax = plt.subplots(figsize=(10, 4), dpi=100)
+        fig, ax = plt.subplots(figsize=(30, 4), dpi=100)
         ax.imshow(pianoroll, aspect="auto", origin="lower", cmap="gray_r")
 
-        ax.set_ylim(35, 85) # 省略掉一般不会出现的区域
+        ax.set_ylim(10, 110) # 省略掉一般不会出现的区域
         ax.set_title(f"Pianoroll: {tag}")
         ax.set_xlabel("Time (frames)")
         ax.set_ylabel("Pitch")

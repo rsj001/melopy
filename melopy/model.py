@@ -2,27 +2,16 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-class TokenEmbedding(nn.Module): # hardcode for token ranges, remember to update if tokenizer changes
-    def __init__(self, vocab_size, d_model, padding_idx):
-        super().__init__()
-        self.token_embed = nn.Embedding(vocab_size + 1, d_model, padding_idx=padding_idx) # TOKEN_233 is MASK
-        self.type_embed = nn.Embedding(5, d_model, padding_idx=0)  # pad, pitch on/off, time, velocity
+from typing import List
 
-    def forward(self, token_ids):
-        """
-        token_ids: [batch, seq_len]
-        """
-        type_ids = torch.zeros_like(token_ids)
-        # NOTE: THIS IS HARDCODED RANGES!!
-        mask1 = (token_ids >= 3) & (token_ids <= 51)      # Note On
-        mask2 = (token_ids >= 52) & (token_ids <= 100)    # Note Off
-        mask3 = (token_ids >= 101) & (token_ids <= 200)   # Time
-        mask4 = (token_ids >= 201) & (token_ids <= 232)   # Velocity
-        type_ids[mask1] = 1
-        type_ids[mask2] = 2
-        type_ids[mask3] = 3
-        type_ids[mask4] = 4
-        return self.token_embed(token_ids) + self.type_embed(type_ids)
+class UncertaintyLossWrapper(nn.Module):
+    def __init__(self, num_tasks, device):
+        super().__init__()
+        self.log_vars = nn.Parameter(torch.zeros(num_tasks, device=device))
+        
+    def forward(self, losses):
+        return sum(torch.exp(-self.log_vars) * losses + self.log_vars)
+    
 
 class RotaryEmbedding(nn.Module):
     """Rotary Positional Embedding."""
@@ -47,7 +36,7 @@ class RotaryEmbedding(nn.Module):
             x: (batch, heads, seq_len, head_dim)
         """
         seq_len = x.size(-2)
-        sin, cos = self.sin[:seq_len, :], self.cos[:seq_len, :]
+        sin, cos = self.get_buffer("sin")[:seq_len, :], self.get_buffer("cos")[:seq_len, :]
         sin, cos = sin.unsqueeze(0).unsqueeze(0), cos.unsqueeze(0).unsqueeze(0)
 
         x1 = x[..., ::2]
@@ -61,7 +50,7 @@ class RotaryEmbedding(nn.Module):
 class MultiHeadAttention(nn.Module):
     """Multi-head self-attention with RoPE and causal masking."""
 
-    def __init__(self, d_model: int, num_heads: int, dropout: float = 0.1, max_seq_len: int = 512):
+    def __init__(self, d_model: int, num_heads: int, dropout: float, max_seq_len: int):
         super().__init__()
         assert d_model % num_heads == 0
         
@@ -90,7 +79,7 @@ class MultiHeadAttention(nn.Module):
         qkv = qkv.permute(2, 0, 3, 1, 4)  # (3, batch, heads, seq_len, head_dim)
         q, k, v = qkv[0], qkv[1], qkv[2]
 
-        # === Apply RoPE ===
+        # RoPE
         q = self.rope(q)
         k = self.rope(k)
 
@@ -114,7 +103,7 @@ class MultiHeadAttention(nn.Module):
 class FeedForward(nn.Module):
     """Position-wise feed-forward network."""
     
-    def __init__(self, d_model: int, d_ff: int, dropout: float = 0.1):
+    def __init__(self, d_model: int, d_ff: int, dropout: float):
         super().__init__()
         self.linear1 = nn.Linear(d_model, d_ff)
         self.linear2 = nn.Linear(d_ff, d_model)
@@ -127,7 +116,7 @@ class FeedForward(nn.Module):
 class TransformerBlock(nn.Module):
     """Transformer decoder block with causal self-attention."""
     
-    def __init__(self, d_model: int, num_heads: int, d_ff: int, dropout: float = 0.1, max_seq_len: int = 512):
+    def __init__(self, d_model: int, num_heads: int, d_ff: int, dropout: float, max_seq_len: int):
         super().__init__()
         self.attention = MultiHeadAttention(d_model, num_heads, dropout, max_seq_len=max_seq_len)
         self.feed_forward = FeedForward(d_model, d_ff, dropout)
@@ -154,7 +143,8 @@ class MIDITransformer(nn.Module):
     
     def __init__(
         self,
-        vocab_size: int,
+        vocab_size: List[int],
+        # 为了更好地coding，这里vocab_size改为dict类型，表示不同类别的token数量
         d_model: int = 512,
         num_layers: int = 6,
         num_heads: int = 8,
@@ -162,6 +152,7 @@ class MIDITransformer(nn.Module):
         max_seq_length: int = 512,
         dropout: float = 0.1,
         pad_token_id: int = 0
+        # 这里是对每一个 token_dim 的 pad
     ):
         super().__init__()
         
@@ -171,11 +162,13 @@ class MIDITransformer(nn.Module):
         self.pad_token_id = pad_token_id
         
         # Token embedding
-        self.token_embedding = TokenEmbedding(vocab_size, d_model, padding_idx=pad_token_id)
-        # self.token_embedding = nn.Embedding(vocab_size + 1, d_model, padding_idx=pad_token_id) # MASK TOKEN
-        
+        self.embeds = nn.ModuleList([
+            nn.Embedding(siz, d_model) for siz in self.vocab_size
+        ])
+        self.vocab_size_full = sum(self.vocab_size)
+
         # Positional encoding
-        # self.pos_embedding = nn.Parameter(torch.zeros(1, max_seq_length, d_model))
+        self.pos_embedding = nn.Parameter(torch.zeros(1, max_seq_length, d_model))
         
         # Transformer blocks
         self.blocks = nn.ModuleList([
@@ -185,7 +178,7 @@ class MIDITransformer(nn.Module):
         
         # Output layer
         self.norm = nn.LayerNorm(d_model)
-        self.lm_head = nn.Linear(d_model, vocab_size, bias=False)
+        self.lm_head = nn.Linear(d_model, self.vocab_size_full, bias=False)
         
         # Dropout
         self.dropout = nn.Dropout(dropout)
@@ -213,28 +206,31 @@ class MIDITransformer(nn.Module):
                 torch.nn.init.ones_(module.weight)
         
         # Initialize positional embeddings
-        # nn.init.normal_(self.pos_embedding, mean=0.0, std=0.02)
+        nn.init.normal_(self.pos_embedding, mean=0.0, std=0.02)
     
-    def forward(self, input_ids, targets=None):
+    def forward(self, input_ids: torch.Tensor, targets: torch.Tensor | None = None):
         """
         Forward pass.
         
         Args:
-            input_ids: (batch_size, seq_len)
-            targets: (batch_size, seq_len) - optional, for computing loss
+            input_ids: (batch_size, seq_len, token_dim)
+            targets: (batch_size, seq_len, token_dim) - optional, for computing loss
             
         Returns:
             logits or (logits, loss)
         """
-        batch_size, seq_len = input_ids.shape
+        batch_size, seq_len, token_dim = input_ids.shape
         
-        # Token embeddings + positional embeddings
-        x = self.token_embedding(input_ids)
-        # x = x + self.pos_embedding[:, :seq_len, :]
+        # Token embeddings 
+        x = sum(self.embeds[i](input_ids[..., i]) for i in range(token_dim)) / token_dim
+        
+        # PE (deprecated, in favor of RoPE)
+        x = x + self.pos_embedding[:, :seq_len, :]
+
         x = self.dropout(x)
         
         # Get causal mask
-        mask = self.causal_mask[:, :, :seq_len, :seq_len]
+        mask = self.get_buffer("causal_mask")[:, :, :seq_len, :seq_len]
         
         # Apply transformer blocks
         for i in range(len(self.blocks)):
@@ -245,15 +241,23 @@ class MIDITransformer(nn.Module):
         logits = self.lm_head(x)
         
         # Compute loss if targets provided
-        loss = None
         if targets is not None:
-            loss = F.cross_entropy(
-                logits.view(-1, self.vocab_size),
-                targets.view(-1),
-                ignore_index=self.pad_token_id
-            )
-        
-        return (logits, loss) if loss is not None else logits
+            logits_T = logits.view(-1, self.vocab_size_full)
+            targets_T = targets.view(-1, token_dim)
+            offset = 0
+            losses = []
+            for i, v in enumerate(self.vocab_size):
+                lg = logits_T[:, offset:offset+v]
+                lb = targets_T[:, i]
+                offset += v
+                if (lb != self.pad_token_id).sum() == 0:
+                    loss = torch.tensor(0., device=lg.device, dtype=lg.dtype)
+                else:
+                    loss = F.cross_entropy(lg, lb, ignore_index=self.pad_token_id)
+                losses.append(loss)
+            return (logits, torch.stack(losses))
+        else:
+            return logits
     
     def get_num_params(self):
         """Get number of parameters in the model."""

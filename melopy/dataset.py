@@ -19,7 +19,6 @@ class MIDIDataset(Dataset):
         seq_length: int = 512,
         stride: Optional[int] = None,
         piano_channels: Optional[List[int]] = None,
-        pitch_augmentation: List[int] = [0],
     ):
         """
         Args:
@@ -47,16 +46,15 @@ class MIDIDataset(Dataset):
         pbar = tqdm(midi_files, desc=f'Preprocessing')
         for midi_file_idx, midi_file in enumerate(pbar):
             try:
-                for pitch in pitch_augmentation:
-                    tokens = tokenizer.encode_midi(midi_file, piano_channels=piano_channels, pitch_augmentation=pitch)
-                    # Chunk the sequence
-                    for i in range(0, len(tokens) - seq_length, self.stride):
-                        chunk = tokens[i:i + seq_length + 1]  # +1 for target
-                        if len(chunk) == seq_length + 1:
-                            self.sequences.append(chunk)
+                tokens = tokenizer.encode_midi(midi_file, piano_channels=piano_channels)
+                # Chunk the sequence
+                for i in range(0, len(tokens) - seq_length, self.stride):
+                    chunk = tokens[i:i + seq_length + 1]  # +1 for target
+                    if len(chunk) == seq_length + 1:
+                        self.sequences.append(chunk)
             # TODO : efficiency evaluation
             except Exception as e:
-                tqdm.write(f"Error processing {midi_file}: {e}")
+                pbar.write(f"Error processing {midi_file}: {e}")
                 continue
         self.sequences = torch.tensor(self.sequences, dtype=torch.uint8)
         

@@ -75,31 +75,43 @@ def generate(
         generated = torch.tensor([[tokenizer.bos_token_id]], dtype=torch.long, device=device)
     else:
         generated = prompt.to(device)
-        if generated.dim() == 1:
+        if generated.dim() == 2:
             generated = generated.unsqueeze(0)
+        # batch dim = 1
     
+    vocab_size = list(tokenizer.vocab_size.values())
     for _ in range(max_length):
         # Get model predictions
         # Only use the last max_seq_length tokens as input
         input_seq = generated[:, -model.max_seq_length:]
         logits = model(input_seq)
+
+        offset = 0
+        next_token_full = torch.tensor([], dtype=torch.long, device=input_seq.device)
+        for idx, siz in enumerate(vocab_size):
+            cur_logit = logits[..., offset: offset + siz]
+            offset += siz
+
+            # Get logits for the last position
+            next_token_logits = cur_logit[0, -1, :] / temperature
         
-        # Get logits for the last position
-        next_token_logits = logits[0, -1, :] / temperature
+            # Apply top-k and top-p filtering
+            _top_k = min(siz//2, top_k)
+            if(siz <= 10):
+                _top_k = siz
+            filtered_logits = top_k_top_p_filtering(next_token_logits, top_k=_top_k, top_p=top_p)
         
-        # Apply top-k and top-p filtering
-        filtered_logits = top_k_top_p_filtering(next_token_logits, top_k=top_k, top_p=top_p)
-        
-        # Sample from the filtered distribution
-        probs = F.softmax(filtered_logits, dim=-1)
-        next_token = torch.multinomial(probs, num_samples=1)
-        
-        # Append to generated sequence
-        generated = torch.cat([generated, next_token.unsqueeze(0)], dim=1)
-        
-        # Stop if EOS token is generated
-        if next_token.item() == tokenizer.eos_token_id:
-            break
+            # Sample from the filtered distribution
+            probs = F.softmax(filtered_logits, dim=-1)
+            next_token = torch.multinomial(probs, num_samples=1)
+
+            next_token_full = torch.cat([next_token_full, next_token])
+
+        generated = torch.cat([generated, next_token_full.unsqueeze(0).unsqueeze(0)], dim=1)        
+        if next_token_full[0] == tokenizer.eos_token_id[0]: # special token
+            print("\nGenerated:", next_token_full)
+            print("\nEOS:", tokenizer.eos_token_id)
+            break        
     
     return generated[0].cpu().tolist()
 
@@ -142,13 +154,8 @@ def main():
         tokenizer_config = json.load(f)
     
     # Initialize tokenizer
-    tokenizer = MIDITokenizer(
-        min_pitch=tokenizer_config['min_pitch'],
-        max_pitch=tokenizer_config['max_pitch'],
-        num_velocity_bins=tokenizer_config['num_velocity_bins'],
-        max_time_shift=tokenizer_config['max_time_shift'],
-        time_shift_resolution=tokenizer_config['time_shift_resolution']
-    )
+    # 这很诡异，你知道吗
+    tokenizer = MIDITokenizer()
     
     print(f"Vocabulary size: {tokenizer.vocab_size}")
     
@@ -161,15 +168,16 @@ def main():
     checkpoint = torch.load(args.checkpoint, map_location=device)
     
     # Initialize model
+    # 这个参数要加载吗
     model = MIDITransformer(
-        vocab_size=tokenizer.vocab_size,
+        vocab_size=list(tokenizer.vocab_size.values()),
         d_model=512,
         num_layers=6,
         num_heads=8,
-        d_ff=2048,
+        d_ff=512 * 4,
         max_seq_length=512,
         dropout=0.1,
-        pad_token_id=tokenizer.pad_token_id
+        pad_token_id=0
     )
     
     model.load_state_dict(checkpoint['model_state_dict'])
@@ -195,7 +203,10 @@ def main():
         # Show prompt preview
         print("\nPrompt sequence preview:")
         for i, tid in enumerate(prompt_tokens[:10]):
-            token_name = tokenizer.id_to_token.get(tid, 'UNKNOWN')
+            token_name = []
+            for idx, key in enumerate(tokenizer.vocab_size):
+                token_name.append(tokenizer.id_to_token[key][tid[idx]])
+            
             print(f"  {i}: {token_name}")
         if len(prompt_tokens) > 10:
             print(f"  ... ({len(prompt_tokens) - 10} more tokens)")
