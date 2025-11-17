@@ -214,8 +214,8 @@ class MIDITokenizer:
         token_ids = [self.bos_token_id]
         for event in events:
             pitch, duration, velocity, delta_time = event
-            if duration < 10:
-                pass # print(f"Detected duration: {duration}, which is weird.")
+            if duration <= 5 or velocity <= 4: # 修剪数据
+                continue
             if pitch < self.min_pitch or pitch > self.max_pitch:
                 continue
             token_ids.append((
