@@ -102,19 +102,9 @@ class Trainer:
             
             self.optimizer.step()
             self.scheduler.step()
+
             
             with torch.no_grad():
-                logits_by_type = torch.split(logits, self.vocab_size, dim = -1)
-                accuracies = []
-                for idx, tok in enumerate(logits_by_type):
-                    pred_ids = torch.argmax(tok, dim=-1)
-                    target_for_type = target_ids[..., idx]
-                    # Compare predictions with targets and compute mean accuracy for this token type
-                    correct = (pred_ids == target_for_type).float()
-                    accuracies.append(correct.mean().item())
-
-                accuracy = accuracies[1] * 0.7 + accuracies[4] * 0.3
-
                 # Update metrics
                 total_loss += loss.item()
                 self.global_step += 1
@@ -122,15 +112,23 @@ class Trainer:
                 # Update progress bar
                 pbar.set_postfix({
                     'loss': f'{loss.item():.4f}',
-                    '7p3t_acc': f'{accuracy:.4f}',
                     'lr': f'{self.scheduler.get_last_lr()[0]:.6f}'
                 })
 
                 # --- TensorBoard metrics ---
                 if self.vis is not None:
                     if self.global_step % self.vis.log_interval == 0:
+                        logits_by_type = torch.split(logits, self.vocab_size, dim = -1)
+                        accuracies = []
+                        for idx, tok in enumerate(logits_by_type):
+                            pred_ids = torch.argmax(tok, dim=-1)
+                            target_for_type = target_ids[..., idx]
+                            # Compare predictions with targets and compute mean accuracy for this token type
+                            correct = (pred_ids == target_for_type).float()
+                            accuracies.append(correct.mean().item())
+                        accuracy = accuracies[1] * 0.7 + accuracies[4] * 0.3
+
                         self.vis.log_loss(loss.item(), self.global_step)
-                        
                         self.vis.log_lr(self.optimizer, self.global_step)
 
                         self.vis.log_grad_norm(self.uncertainty, self.global_step, name = 'uncertainty_grad_norm')
