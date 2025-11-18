@@ -128,15 +128,25 @@ class Trainer:
                 if self.vis is not None:
                     if self.global_step % self.vis.log_interval == 0:
                         self.vis.log_loss(loss.item(), self.global_step)
+                        
                         self.vis.log_lr(self.optimizer, self.global_step)
+
                         self.vis.log_grad_norm(self.uncertainty, self.global_step, name = 'uncertainty_grad_norm')
                         self.vis.log_grad_norm(self.model, self.global_step)
+
                         self.vis.log_loss(total_loss / (batch_idx + 1), self.global_step, prefix="train", name="avg_loss")
-                        self.vis.log_loss(accuracy, self.global_step, prefix="train_acc", name="7p3t_accuracy")
-                        self.vis.log_loss(accuracies[1], self.global_step, prefix="train_acc", name="pitch")
-                        self.vis.log_loss(accuracies[2], self.global_step, prefix="train_acc", name="duration")
-                        self.vis.log_loss(accuracies[3], self.global_step, prefix="train_acc", name="velocity")
-                        self.vis.log_loss(accuracies[4], self.global_step, prefix="train_acc", name="time_shift")
+                        self.vis.log_loss(accuracy, self.global_step, prefix="train_acc_token", name="7p3t_accuracy")
+
+                        self.vis.log_loss(accuracies[1], self.global_step, prefix="train_acc_token", name="pitch")
+                        self.vis.log_loss(accuracies[2], self.global_step, prefix="train_acc_token", name="duration")
+                        self.vis.log_loss(accuracies[3], self.global_step, prefix="train_acc_token", name="velocity")
+                        self.vis.log_loss(accuracies[4], self.global_step, prefix="train_acc_token", name="time_shift")
+
+                        self.vis.log_loss(losses[0], self.global_step, prefix="train_loss_token", name="special")
+                        self.vis.log_loss(losses[1], self.global_step, prefix="train_loss_token", name="pitch")
+                        self.vis.log_loss(losses[2], self.global_step, prefix="train_loss_token", name="duration")
+                        self.vis.log_loss(losses[3], self.global_step, prefix="train_loss_token", name="velocity")
+                        self.vis.log_loss(losses[4], self.global_step, prefix="train_loss_token", name="time_shift")
 
         
         avg_loss = total_loss / len(self.train_loader)
