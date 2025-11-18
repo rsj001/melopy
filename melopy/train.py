@@ -10,7 +10,7 @@ import json
 from tqdm import tqdm
 import argparse
 
-from typing import Optional
+from typing import Optional, List
 import random
 
 from tokenizer import MIDITokenizer
@@ -26,6 +26,7 @@ class Trainer:
         self,
         model: nn.Module,
         train_loader: DataLoader,
+        vocab_size: List[int],
         val_loader: Optional[DataLoader] = None,
         learning_rate: float = 3e-4,
         weight_decay: float = 0.01,
@@ -40,6 +41,7 @@ class Trainer:
         self.device = device
         self.checkpoint_dir = checkpoint_dir
         self.vis = vis
+        self.vocab_size = vocab_size
         self.num_tasks = num_tasks
 
         self.uncertainty = UncertaintyLossWrapper(num_tasks, device)
@@ -100,9 +102,16 @@ class Trainer:
             self.scheduler.step()
             
             with torch.no_grad():
-                # pred_ids = torch.argmax(logits, dim=-1)
-                # correct = (pred_ids == target_ids).float()
-                # accuracy = correct.mean().item()
+                logits_by_type = torch.split(logits, self.vocab_size, dim = -1)
+                accuracies = []
+                for idx, tok in enumerate(logits_by_type):
+                    pred_ids = torch.argmax(tok, dim=-1)
+                    target_for_type = target_ids[..., idx]
+                    # Compare predictions with targets and compute mean accuracy for this token type
+                    correct = (pred_ids == target_for_type).float()
+                    accuracies.append(correct.mean().item())
+
+                accuracy = accuracies[1] * 0.7 + accuracies[4] * 0.3
 
                 # Update metrics
                 total_loss += loss.item()
@@ -111,7 +120,7 @@ class Trainer:
                 # Update progress bar
                 pbar.set_postfix({
                     'loss': f'{loss.item():.4f}',
-                    # 'acc': f'{accuracy:.4f}',
+                    '7p3t_acc': f'{accuracy:.4f}',
                     'lr': f'{self.scheduler.get_last_lr()[0]:.6f}'
                 })
 
@@ -123,7 +132,11 @@ class Trainer:
                         self.vis.log_grad_norm(self.uncertainty, self.global_step, name = 'uncertainty_grad_norm')
                         self.vis.log_grad_norm(self.model, self.global_step)
                         self.vis.log_loss(total_loss / (batch_idx + 1), self.global_step, prefix="train", name="avg_loss")
-                        # self.vis.log_loss(accuracy, self.global_step, prefix="train", name="accuracy")
+                        self.vis.log_loss(accuracy, self.global_step, prefix="train_acc", name="7p3t_accuracy")
+                        self.vis.log_loss(accuracies[1], self.global_step, prefix="train_acc", name="pitch")
+                        self.vis.log_loss(accuracies[2], self.global_step, prefix="train_acc", name="duration")
+                        self.vis.log_loss(accuracies[3], self.global_step, prefix="train_acc", name="velocity")
+                        self.vis.log_loss(accuracies[4], self.global_step, prefix="train_acc", name="time_shift")
 
         
         avg_loss = total_loss / len(self.train_loader)
@@ -449,6 +462,7 @@ def main():
     # Initialize trainer
     trainer = Trainer(
         model=model,
+        vocab_size=list(tokenizer.vocab_size.values()),
         train_loader=train_loader,
         val_loader=val_loader,
         learning_rate=args.lr, # learning_rate 会被 resume 覆盖
