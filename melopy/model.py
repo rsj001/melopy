@@ -168,7 +168,7 @@ class MIDITransformer(nn.Module):
         num_heads: int = 8,
         d_ff: int = 2048,
         max_seq_length: int = 512,
-        dropout: float = 0.1,
+        dropout: float = 0.12,
         pad_token_id: int = 0
         # 这里是对每一个 token_dim 的 pad
     ):

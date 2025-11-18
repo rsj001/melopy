@@ -190,7 +190,7 @@ def GenerationWorkflow(use_parser: bool = True, user_args: dict = {}, preload_mo
             num_heads=8,
             d_ff=512 * 4,
             max_seq_length=512,
-            dropout=0.1,
+            dropout=0.12,
             pad_token_id=0
         )
         model.load_state_dict(checkpoint['model_state_dict'])

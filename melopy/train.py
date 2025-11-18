@@ -468,7 +468,7 @@ def main():
         num_heads=args.num_heads,
         d_ff=args.d_model * 4,
         max_seq_length=args.seq_length,
-        dropout=0.1,
+        dropout=0.12,
         pad_token_id=0
         # 严格意义上这不是 token
     )
