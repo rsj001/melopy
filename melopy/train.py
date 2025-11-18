@@ -2,6 +2,7 @@
 Training script for MIDI GPT model.
 """
 
+
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, Subset, ConcatDataset
@@ -12,6 +13,7 @@ import argparse
 
 from typing import Optional, List
 import random
+import datetime
 
 from tokenizer import MIDITokenizer
 from dataset import MIDIDataset, get_midi_files
@@ -470,11 +472,14 @@ def main():
         pad_token_id=0
         # 严格意义上这不是 token
     )
-    
 
+    args.result_dir = "results/auto" # TODO NOTE HARDCODE
+    
+    os.makedirs(args.result_dir, exist_ok=True)
     generation_args = {
-        "checkpoint": "checkpoints/best_model.pt",
-        "output": "generated.mid",
+        "checkpoint": os.path.join(args.checkpoint_dir, "checkpoint_quicksave.pt"),
+        "output_dir": args.result_dir,
+        "output": "This will be forced to change in visualizer.mid",
         "prompt_midi": None,
         "prompt_length": None,
         "max_length": 512,

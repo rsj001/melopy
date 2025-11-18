@@ -1,6 +1,6 @@
 import io
 import os
-import subprocess
+from datetime import datetime
 
 import torch
 import pretty_midi
@@ -30,10 +30,10 @@ class TrainVisualizer:
         self._ema_cache = {}  # key -> ema value
 
         self.preload_model = preload_model
-
-        if "output" not in generation_args:
-            generation_args["output"] = "generated.mid"
         self.generation_args = generation_args
+
+        if "output_dir" not in self.generation_args:
+            self.generation_args["output_dir"] = "results/auto"
 
     # ---------------------------------------------------------
     # Metric Logging
@@ -94,8 +94,10 @@ class TrainVisualizer:
     # MIDI Visuals
     # ---------------------------------------------------------
     def generate_and_log_midi(self, step: int, tag="generated"): # 稍稍改进，不过还是临时方案
+        timestamp = datetime.now().strftime("%y%m%d_%H%M%S")
+        self.generation_args["output"] = os.path.join(self.generation_args["output_dir"], f"step_{step}_{timestamp}.mid")
+        # force to override
         GenerationWorkflow(False, self.generation_args, self.preload_model, None)
-        # subprocess.run(["sh", "scripts/generate_with_prompt.sh"], check=True)
         self.log_midi(self.generation_args["output"], step, tag)
 
     def log_midi(self, midi_dir: str, step: int, tag="generated"):
