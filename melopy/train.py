@@ -24,7 +24,7 @@ class Trainer:
     
     def __init__(
         self,
-        model: nn.Module,
+        model: MIDITransformer,
         train_loader: DataLoader,
         vocab_size: List[int],
         val_loader: Optional[DataLoader] = None,
@@ -241,13 +241,15 @@ class Trainer:
             if self.val_loader is not None:
                 val_loss = self.validate()
                 if val_loss is not None:
-                    print(f"Epoch {epoch}: Val Loss = {val_loss:.4f}")
+                    print(f"Epoch {epoch}: Val Loss = {val_loss:.4f}", end="")
                     
                     # Save best model
                     if val_loss < self.best_val_loss:
                         self.best_val_loss = val_loss
                         self.save_checkpoint("best_model.pt") # save with special name!
-                        print(f"New best validation loss: {val_loss:.4f}")
+                        print(f" New best!")
+                    else:
+                        print("")
             
             # Save checkpoint periodically
             if epoch % save_every == 0:
@@ -469,6 +471,20 @@ def main():
         # 严格意义上这不是 token
     )
     
+
+    generation_args = {
+        "checkpoint": "checkpoints/best_model.pt",
+        "output": "generated.mid",
+        "prompt_midi": None,
+        "prompt_length": None,
+        "max_length": 512,
+        "temperature": 1.1,
+        "top_k": 50,
+        "top_p": 0.9,
+        "seed": None,
+        "piano_channels": '0, 1, 2, 3, 4, 5'
+    }
+    
     # Initialize trainer
     trainer = Trainer(
         model=model,
@@ -477,7 +493,7 @@ def main():
         val_loader=val_loader,
         learning_rate=args.lr, # learning_rate 会被 resume 覆盖
         checkpoint_dir=args.checkpoint_dir,
-        vis=TrainVisualizer(log_dir = args.log_dir, log_interval=args.log_interval)
+        vis=TrainVisualizer(log_dir = args.log_dir, log_interval=args.log_interval, generation_args=generation_args, preload_model=model)
     )
     
     # Resume from checkpoint if requested

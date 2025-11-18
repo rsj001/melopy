@@ -10,9 +10,12 @@ import matplotlib.pyplot as plt
 from torch.utils.tensorboard import SummaryWriter
 import numpy as np
 
+from model import MIDITransformer
+from generate import GenerationWorkflow
+
 class TrainVisualizer:
     def __init__(self, log_dir="checkpoints/tensorboard", sample_rate=16000, fps=100,
-                 max_audio_seconds=20, ema_decay=0.98, log_interval = 500):
+                 max_audio_seconds=20, ema_decay=0.98, log_interval = 500, generation_args = {}, preload_model: MIDITransformer | None = None):
         """
         ema_decay 用于平滑曲线，例如 avg_loss。
         """
@@ -25,7 +28,12 @@ class TrainVisualizer:
         self.ema_decay = ema_decay
         self.log_interval = log_interval
         self._ema_cache = {}  # key -> ema value
-        
+
+        self.preload_model = preload_model
+
+        if "output" not in generation_args:
+            generation_args["output"] = "generated.mid"
+        self.generation_args = generation_args
 
     # ---------------------------------------------------------
     # Metric Logging
@@ -85,9 +93,10 @@ class TrainVisualizer:
     # ---------------------------------------------------------
     # MIDI Visuals
     # ---------------------------------------------------------
-    def generate_and_log_midi(self, step: int, tag="generated"): # 一个临时方案，临时方案！！！！
-        subprocess.run(["sh", "scripts/generate_with_prompt.sh"], check=True)
-        self.log_midi("results/demo.mid", step, tag)
+    def generate_and_log_midi(self, step: int, tag="generated"): # 稍稍改进，不过还是临时方案
+        GenerationWorkflow(False, self.generation_args, self.preload_model, None)
+        # subprocess.run(["sh", "scripts/generate_with_prompt.sh"], check=True)
+        self.log_midi(self.generation_args["output"], step, tag)
 
     def log_midi(self, midi_dir: str, step: int, tag="generated"):
         midi = pretty_midi.PrettyMIDI(midi_dir)
