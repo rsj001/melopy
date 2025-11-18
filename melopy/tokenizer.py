@@ -8,7 +8,13 @@ const_log_bin = [0, 5, 10, 15] + \
             [i for i in range(1000, 2000, 100)] + \
                 [i for i in range(2000, 3000, 200)] + \
                     [i for i in range(3000, 4200, 300)] + \
-                        [i for i in range(4200, 6000, 400)]
+                        [i for i in range(4200, 5000, 400)] + \
+                        [5000, 5500, 6000]
+
+const_log_bin_2 = [i for i in range(100, 1500, 50)] + \
+                [i for i in range(1500, 2000, 100)] + \
+                [i for i in range(2000, 3000, 250)] + \
+                [3000, 4000, 5000, 6000]
 
 class MIDITokenizer:
     """
@@ -26,7 +32,7 @@ class MIDITokenizer:
         min_pitch: int = 12,  # C0
         max_pitch: int = 109,  # C9
         velocity_bins: List[int] = [i for i in range(1, 128, 4)],
-        duration_bins: List[int] = const_log_bin,
+        duration_bins: List[int] = const_log_bin_2,
         time_shift_bins: List[int] = const_log_bin,
     ):
         self.min_pitch = min_pitch
@@ -34,18 +40,19 @@ class MIDITokenizer:
         self.velocity_bins = velocity_bins
         self.duration_bins = duration_bins
         self.time_shift_bins = time_shift_bins
-        self.version = "1.1"
+        self.version = "1.3"
 
         self.token_to_id = {}
         self.id_to_token = {}
         current_id = 0
         # Special tokens
 
-        self.vocab_full = {"special": ['<PAD>', '<BOS>', '<EOS>', '<NOTE>', '<MASK>'],
-                      "note": ['<PAD>'] + [f'NOTE_{pitch}' for pitch in range(self.min_pitch, self.max_pitch + 1)],
-                      "duration": ['<PAD>'] + [f'DURATION_{dur_bin}' for dur_bin in duration_bins],
-                      "velocity": ['<PAD>'] + [f'VELOCITY_{vel_bin}' for vel_bin in velocity_bins],
-                      "time_shift": ['<PAD>'] + [f'TIME_SHIFT_{shift}' for shift in time_shift_bins],
+        self.special_token = ['<PAD>', '<BOS>', '<EOS>', '<MASK>']
+
+        self.vocab_full = {"note": self.special_token + [f'NOTE_{pitch}' for pitch in range(self.min_pitch, self.max_pitch + 1)],
+                      "duration": self.special_token + [f'DURATION_{dur_bin}' for dur_bin in duration_bins],
+                      "velocity": self.special_token + [f'VELOCITY_{vel_bin}' for vel_bin in velocity_bins],
+                      "time_shift": self.special_token + [f'TIME_SHIFT_{shift}' for shift in time_shift_bins],
                       }
                       
         for category, tokens in self.vocab_full.items():
@@ -60,13 +67,15 @@ class MIDITokenizer:
         self.vocab_size = {cat: len(toks) for cat, toks in self.vocab_full.items()}
         self.vocab_size_full = sum(self.vocab_size.values())
 
-        self.bos_token_id = (self.token_to_id['special']['<BOS>'],
-                    self.token_to_id['note']['<PAD>'],
-                    self.token_to_id['duration']['<PAD>'],
-                    self.token_to_id['velocity']['<PAD>'],
-                    self.token_to_id['time_shift']['<PAD>'])
-        self.eos_token_id = (self.token_to_id['special']['<EOS>'],
-                    self.token_to_id['note']['<PAD>'],
+        self.bos_token = (self.token_to_id['note']['<BOS>'],
+                    self.token_to_id['duration']['<BOS>'],
+                    self.token_to_id['velocity']['<BOS>'],
+                    self.token_to_id['time_shift']['<BOS>'])
+        self.eos_token = (self.token_to_id['note']['<EOS>'],
+                    self.token_to_id['duration']['<EOS>'],
+                    self.token_to_id['velocity']['<EOS>'],
+                    self.token_to_id['time_shift']['<EOS>'])
+        self.pad_token = (self.token_to_id['note']['<PAD>'],
                     self.token_to_id['duration']['<PAD>'],
                     self.token_to_id['velocity']['<PAD>'],
                     self.token_to_id['time_shift']['<PAD>'])
@@ -211,21 +220,18 @@ class MIDITokenizer:
         # print("max delta time:", maxm)
         # print("max duration:", maxd)
 
-        token_ids = [self.bos_token_id]
+        token_ids = [self.bos_token]
         for event in events:
             pitch, duration, velocity, delta_time = event
-            if duration <= 5 or velocity <= 4: # 修剪数据
-                continue
             if pitch < self.min_pitch or pitch > self.max_pitch:
                 continue
             token_ids.append((
-                self.token_to_id['special']['<NOTE>'],
                 self.token_to_id['note'][f'NOTE_{pitch}'],
                 self.token_to_id['duration'][f'DURATION_{duration}'],
                 self.token_to_id['velocity'][f'VELOCITY_{velocity}'],
                 self.token_to_id['time_shift'][f'TIME_SHIFT_{delta_time}']
             ))
-        token_ids.append(self.eos_token_id)
+        token_ids.append(self.eos_token)
         return token_ids
     
     def decode_to_midi(self, token_ids: List[tuple], output_path: str):
@@ -241,11 +247,12 @@ class MIDITokenizer:
 
         events = []
         for token in token_ids:
-            special, pitch, duration, velocity, delta_time = token
-            if self.id_to_token['special'][special] == '<EOS>':
+            pitch, duration, velocity, delta_time = token
+            if self.id_to_token['note'][pitch] == '<EOS>':
                 break
-            if self.id_to_token['note'][pitch] == '<PAD>':
+            if self.id_to_token['note'][pitch][0] == '<': # HARDCODE
                 continue
+
             pitch = int(self.id_to_token['note'][pitch].split('_')[-1])
             duration = int(self.id_to_token['duration'][duration].split('_')[-1])
             velocity = int(self.id_to_token['velocity'][velocity].split('_')[-1])

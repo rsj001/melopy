@@ -137,20 +137,22 @@ class TransformerBlock(nn.Module):
         
         return x
     
-class FiveFusionLinearPooling(nn.Module):
-    def __init__(self, vector_dim):
+class FusionLinearPooling(nn.Module):
+    def __init__(self, vector_dim, num_vec):
         super().__init__()
-        self.num_vec = 5 # HARDCODED FIVE
+        self.num_vec = num_vec
         self.vector_dim = vector_dim
         self.total_dim = self.num_vec * vector_dim
-        self.fusion_net = nn.Sequential(
-            nn.Linear(self.total_dim, 2 * vector_dim),
-            nn.ReLU(),
-            nn.Linear(2 * vector_dim, vector_dim)
-        )
+        # self.fusion_net = nn.Sequential(
+        #     nn.Linear(self.total_dim, 2 * vector_dim),
+        #     nn.ReLU(),
+        #     nn.Linear(2 * vector_dim, vector_dim)
+        # )
+        self.fusion_net = nn.Linear(self.total_dim, vector_dim)
+        # Just Linear. Trust me.
     def forward(self, vectors: tuple[torch.Tensor, ...] | list[torch.Tensor]):
         # vectors: [v1, v2, v3, v4, v5], 每个形状为 [batch_size, vector_dim]
-        concatenated = torch.cat(vectors, dim=-1)  # [batch_size, 5 * vector_dim]
+        concatenated = torch.cat(vectors, dim=-1)  # [batch_size, x * vector_dim]
         fused = self.fusion_net(concatenated)  # [batch_size, output_dim]
         return fused
 
@@ -162,7 +164,7 @@ class MIDITransformer(nn.Module):
     def __init__(
         self,
         vocab_size: List[int],
-        # 为了更好地coding，这里vocab_size改为dict类型，表示不同类别的token数量
+        # 为了更好地coding，这里vocab_size改为list类型，表示不同类别的token数量
         d_model: int = 512,
         num_layers: int = 6,
         num_heads: int = 8,
@@ -170,7 +172,7 @@ class MIDITransformer(nn.Module):
         max_seq_length: int = 512,
         dropout: float = 0.12,
         pad_token_id: int = 0
-        # 这里是对每一个 token_dim 的 pad
+        # NOTE !! 这里是对每一个 token_dim 的 pad
     ):
         super().__init__()
         
@@ -184,7 +186,7 @@ class MIDITransformer(nn.Module):
             nn.Embedding(siz, d_model) for siz in self.vocab_size
         ])
         self.vocab_size_full = sum(self.vocab_size)
-        self.linear_pooling = FiveFusionLinearPooling(d_model)
+        self.linear_pooling = FusionLinearPooling(d_model, len(vocab_size))
 
         # Positional encoding
         self.pos_embedding = nn.Parameter(torch.zeros(1, max_seq_length, d_model))
@@ -242,8 +244,9 @@ class MIDITransformer(nn.Module):
         
         # Token embeddings 
         
-        # A TOO SIMPLE POOLING 可能导致什么问题呢？
+        # Mean pooling 可能导致什么问题呢？
         # x = sum(self.embeds[i](input_ids[..., i]) for i in range(token_dim)) / token_dim
+        
         # Linear pooling
         x = self.linear_pooling([self.embeds[i](input_ids[..., i]) for i in range(token_dim)])
         

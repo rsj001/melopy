@@ -73,7 +73,7 @@ def generate(
     
     # Initialize with BOS token if no prompt
     if prompt is None:
-        generated = torch.tensor([[tokenizer.bos_token_id]], dtype=torch.long, device=device)
+        generated = torch.tensor([[tokenizer.bos_token]], dtype=torch.long, device=device)
     else:
         generated = prompt.to(device)
         if generated.dim() == 2:
@@ -81,6 +81,7 @@ def generate(
         # batch dim = 1
     
     vocab_size = list(tokenizer.vocab_size.values())
+    tensor_eos_token = torch.tensor(tokenizer.eos_token, device=device)
     for _ in range(max_length):
         # Get model predictions
         # Only use the last max_seq_length tokens as input
@@ -88,7 +89,8 @@ def generate(
         logits = model(input_seq)
 
         offset = 0
-        next_token_full = torch.tensor([], dtype=torch.long, device=input_seq.device)
+        next_token_full = torch.tensor([], dtype=torch.long, device=device)
+
         for idx, siz in enumerate(vocab_size):
             cur_logit = logits[..., offset: offset + siz]
             offset += siz
@@ -105,14 +107,15 @@ def generate(
             # Sample from the filtered distribution
             probs = F.softmax(filtered_logits, dim=-1)
             next_token = torch.multinomial(probs, num_samples=1)
-
             next_token_full = torch.cat([next_token_full, next_token])
 
+        if (tensor_eos_token == next_token_full).sum() > 0: # at least one eos
+            print("\nCUR TOKEN:", next_token_full)
+            print("\nSTD EOS:", tokenizer.eos_token)
+            generated = torch.cat([generated, tensor_eos_token.unsqueeze(0).unsqueeze(0)], dim=1)     
+            break
         generated = torch.cat([generated, next_token_full.unsqueeze(0).unsqueeze(0)], dim=1)        
-        if next_token_full[0] == tokenizer.eos_token_id[0]: # special token
-            print("\nGenerated:", next_token_full)
-            print("\nEOS:", tokenizer.eos_token_id)
-            break        
+        
     
     return generated[0].cpu().tolist()
 

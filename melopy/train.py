@@ -35,7 +35,6 @@ class Trainer:
         device: str = 'cuda' if torch.cuda.is_available() else 'cpu',
         checkpoint_dir: str = 'checkpoints',
         vis: Optional[TrainVisualizer] = None,
-        num_tasks: int = 5,
     ):
         self.model = model.to(device)
         self.train_loader = train_loader
@@ -44,9 +43,9 @@ class Trainer:
         self.checkpoint_dir = checkpoint_dir
         self.vis = vis
         self.vocab_size = vocab_size
-        self.num_tasks = num_tasks
+        self.num_tasks = len(vocab_size)
 
-        self.uncertainty = UncertaintyLossWrapper(num_tasks, device)
+        self.uncertainty = UncertaintyLossWrapper(self.num_tasks, device)
         
         os.makedirs(checkpoint_dir, exist_ok=True)
         
@@ -126,8 +125,8 @@ class Trainer:
                             # Compare predictions with targets and compute mean accuracy for this token type
                             correct = (pred_ids == target_for_type).float()
                             accuracies.append(correct.mean().item())
-                        accuracy = accuracies[1] * 0.7 + accuracies[4] * 0.3
 
+                        # NOTE THIS IS HARDCODED 
                         self.vis.log_loss(loss.item(), self.global_step)
                         self.vis.log_lr(self.optimizer, self.global_step)
 
@@ -135,18 +134,16 @@ class Trainer:
                         self.vis.log_grad_norm(self.model, self.global_step)
 
                         self.vis.log_loss(total_loss / (batch_idx + 1), self.global_step, prefix="train", name="avg_loss")
-                        self.vis.log_loss(accuracy, self.global_step, prefix="train_acc_token", name="7p3t_accuracy")
 
-                        self.vis.log_loss(accuracies[1], self.global_step, prefix="train_acc_token", name="pitch")
-                        self.vis.log_loss(accuracies[2], self.global_step, prefix="train_acc_token", name="duration")
-                        self.vis.log_loss(accuracies[3], self.global_step, prefix="train_acc_token", name="velocity")
-                        self.vis.log_loss(accuracies[4], self.global_step, prefix="train_acc_token", name="time_shift")
+                        self.vis.log_loss(accuracies[0], self.global_step, prefix="train_acc_token", name="pitch")
+                        self.vis.log_loss(accuracies[1], self.global_step, prefix="train_acc_token", name="duration")
+                        self.vis.log_loss(accuracies[2], self.global_step, prefix="train_acc_token", name="velocity")
+                        self.vis.log_loss(accuracies[3], self.global_step, prefix="train_acc_token", name="time_shift")
 
-                        self.vis.log_loss(losses[0], self.global_step, prefix="train_loss_token", name="special")
-                        self.vis.log_loss(losses[1], self.global_step, prefix="train_loss_token", name="pitch")
-                        self.vis.log_loss(losses[2], self.global_step, prefix="train_loss_token", name="duration")
-                        self.vis.log_loss(losses[3], self.global_step, prefix="train_loss_token", name="velocity")
-                        self.vis.log_loss(losses[4], self.global_step, prefix="train_loss_token", name="time_shift")
+                        self.vis.log_loss(losses[0], self.global_step, prefix="train_loss_token", name="pitch")
+                        self.vis.log_loss(losses[1], self.global_step, prefix="train_loss_token", name="duration")
+                        self.vis.log_loss(losses[2], self.global_step, prefix="train_loss_token", name="velocity")
+                        self.vis.log_loss(losses[3], self.global_step, prefix="train_loss_token", name="time_shift")
 
         
         avg_loss = total_loss / len(self.train_loader)
@@ -288,6 +285,7 @@ def main():
     args, _ = parser.parse_known_args()
     default_log_dir = os.path.join(args.checkpoint_dir, "logs")
     parser.add_argument('--log_dir', type=str, default=default_log_dir, help='Directory for logs')
+    parser.add_argument('--result_dir', type=str, default="results/auto", help='Directory for generated files')
 
     parser.add_argument('--seq_length', type=int, default=512, help='Sequence length')
     parser.add_argument('--batch_size', type=int, default=32, help='Batch size')
@@ -299,6 +297,9 @@ def main():
     parser.add_argument('--save_every', type=int, default=5, help='Checkpoints saving frequency')
     parser.add_argument('--chunk_stride', type=int, default=256, help='Stride for sequence chunking')
     parser.add_argument('--log_interval', type=int, default=500, help='Log frenqeuency (in steps)')
+
+
+
 
     parser.add_argument(
         '--debug',
@@ -409,7 +410,7 @@ def main():
             tokenizer=tokenizer,
             seq_length=args.seq_length,
             piano_channels=piano_channels,
-            stride=args.chunk_stride,
+            stride=args.chunk_stride
         )
         if len(dataset) == 0:
             print("No sequences created from MIDI files. Check your data.")
@@ -445,7 +446,7 @@ def main():
         dataset,
         batch_size=args.batch_size,
         shuffle=True,
-        num_workers=2,       # Use small >0 to speed up 然并卵
+        num_workers=4,       # Use small >0 to speed up 然并卵
         pin_memory=True,     # Help copy data to GPU faster 然并卵
         persistent_workers=True  # Keeps workers alive between epochs 然并卵
     )
@@ -471,8 +472,6 @@ def main():
         # 严格意义上这不是 token
     )
 
-    args.result_dir = "results/auto" # TODO NOTE HARDCODE
-    
     os.makedirs(args.result_dir, exist_ok=True)
     generation_args = {
         "checkpoint": os.path.join(args.checkpoint_dir, "checkpoint_quicksave.pt"),
@@ -480,7 +479,7 @@ def main():
         "output": "This will be forced to change in visualizer.mid",
         "prompt_midi": None,
         "prompt_length": None,
-        "max_length": 512,
+        "max_length": 256,
         "temperature": 1.1,
         "top_k": 50,
         "top_p": 0.9,
