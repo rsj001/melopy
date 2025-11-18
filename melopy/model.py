@@ -4,6 +4,8 @@ import torch.nn.functional as F
 
 from typing import List
 
+# 一个带正则化系数 ln x 的线性组合
+# 仍然存在模型刻意降低 loss 大的参数的风险
 class UncertaintyLossWrapper(nn.Module):
     def __init__(self, num_tasks, device):
         super().__init__()
@@ -134,7 +136,23 @@ class TransformerBlock(nn.Module):
         x = x + self.dropout(ff_out)
         
         return x
-
+    
+class FiveFusionLinearPooling(nn.Module):
+    def __init__(self, vector_dim):
+        super().__init__()
+        self.num_vec = 5 # HARDCODED FIVE
+        self.vector_dim = vector_dim
+        self.total_dim = self.num_vec * vector_dim
+        self.fusion_net = nn.Sequential(
+            nn.Linear(self.total_dim, 2 * vector_dim),
+            nn.ReLU(),
+            nn.Linear(2 * vector_dim, vector_dim)
+        )
+    def forward(self, vectors: tuple[torch.Tensor, ...] | list[torch.Tensor]):
+        # vectors: [v1, v2, v3, v4, v5], 每个形状为 [batch_size, vector_dim]
+        concatenated = torch.cat(vectors, dim=-1)  # [batch_size, 5 * vector_dim]
+        fused = self.fusion_net(concatenated)  # [batch_size, output_dim]
+        return fused
 
 class MIDITransformer(nn.Module):
     """
@@ -166,6 +184,7 @@ class MIDITransformer(nn.Module):
             nn.Embedding(siz, d_model) for siz in self.vocab_size
         ])
         self.vocab_size_full = sum(self.vocab_size)
+        self.linear_pooling = FiveFusionLinearPooling(d_model)
 
         # Positional encoding
         self.pos_embedding = nn.Parameter(torch.zeros(1, max_seq_length, d_model))
@@ -222,7 +241,12 @@ class MIDITransformer(nn.Module):
         batch_size, seq_len, token_dim = input_ids.shape
         
         # Token embeddings 
-        x = sum(self.embeds[i](input_ids[..., i]) for i in range(token_dim)) / token_dim
+        
+        # A TOO SIMPLE POOLING 可能导致什么问题呢？
+        # x = sum(self.embeds[i](input_ids[..., i]) for i in range(token_dim)) / token_dim
+        # Linear pooling
+        x = self.linear_pooling([self.embeds[i](input_ids[..., i]) for i in range(token_dim)])
+        
         
         # PE (deprecated, in favor of RoPE)
         x = x + self.pos_embedding[:, :seq_len, :]
