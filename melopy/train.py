@@ -98,7 +98,8 @@ class Trainer:
                                 center_boost = [12, 0, 0, 12],
                                 radius = [2, 2, 4, 2], 
                                 alpha = [12, 0.36, 0.45, 12], 
-                                distribution = ["inverse", "gauss", "gauss", "inverse"]
+                                distribution = ["inverse", "gauss", "gauss", "inverse"],
+                                label_smoothing = True
                                 )
             logits, losses = output
             

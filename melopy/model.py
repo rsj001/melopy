@@ -331,11 +331,12 @@ class MIDITransformer(nn.Module):
                     else:
                         raise ValueError("Unsupported distribution")
                     
-                    weights = weights / weights.sum(dim=1, keepdim=True)      # [M, K]
-                    
                     if center_boost[i] != 0.0:
                         center_mask = (neighbor_idx == lb_soft.unsqueeze(1))
                         weights = weights + center_boost[i] * center_mask.float()
+                    weights = weights / weights.sum(dim=1, keepdim=True)      # [M, K]
+                    
+                    
 
                     # gather logits
                     logits_selected = lg_soft.gather(1, neighbor_idx)        # [M, K]
