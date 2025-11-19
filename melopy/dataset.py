@@ -41,7 +41,7 @@ class MIDIDataset(Dataset):
         seq_length: int = 512,
         stride: Optional[int] = None,
         piano_channels: Optional[List[int]] = None,
-        num_workers: int = 8,
+        num_workers: int = 16,
     ):
         """
         Args:
