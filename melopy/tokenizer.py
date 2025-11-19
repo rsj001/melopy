@@ -11,7 +11,7 @@ const_log_bin = [0, 5, 10, 15] + \
                         [i for i in range(4200, 5000, 400)] + \
                         [5000, 5500, 6000]
 
-const_log_bin_2 = [i for i in range(100, 1500, 50)] + \
+const_log_bin_2 = [i for i in range(50, 1500, 50)] + \
                 [i for i in range(1500, 2000, 100)] + \
                 [i for i in range(2000, 3000, 250)] + \
                 [3000, 4000, 5000, 6000]
@@ -40,7 +40,7 @@ class MIDITokenizer:
         self.velocity_bins = velocity_bins
         self.duration_bins = duration_bins
         self.time_shift_bins = time_shift_bins
-        self.version = "1.3"
+        self.version = "1.4"
 
         self.token_to_id = {}
         self.id_to_token = {}
