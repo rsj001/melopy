@@ -10,6 +10,7 @@ import os
 import json
 from tqdm.auto import tqdm
 import argparse
+import math
 
 from typing import Optional, List
 import random
@@ -28,13 +29,16 @@ class Trainer:
         model: MIDITransformer,
         train_loader: DataLoader,
         vocab_size: List[int],
+        num_epochs: int,
         val_loader: Optional[DataLoader] = None,
         learning_rate: float = 3e-4,
         weight_decay: float = 0.01,
         device: str = 'cuda' if torch.cuda.is_available() else 'cpu',
         checkpoint_dir: str = 'checkpoints',
         vis: Optional[TrainVisualizer] = None,
+        save_every: int = 5
     ):
+        self.save_every = save_every
         self.model = model.to(device)
         self.train_loader = train_loader
         self.val_loader = val_loader
@@ -43,6 +47,7 @@ class Trainer:
         self.vis = vis
         self.vocab_size = vocab_size
         self.num_tasks = len(vocab_size)
+        self.num_epochs = num_epochs
 
         self.uncertainty = UncertaintyLossWrapper(self.num_tasks, device)
         
@@ -51,21 +56,25 @@ class Trainer:
         # Optimizer
         self.optimizer = torch.optim.AdamW([{
             'params': model.parameters(),
-            'lr': learning_rate,          # 主模型使用较小的学习率
+            'lr': learning_rate,
             'weight_decay': weight_decay,
             'betas':(0.9, 0.98),
         },{
             'params': self.uncertainty.parameters(),
-            'lr': learning_rate / 10.0,
-            'weight_decay': 0.0,    # 通常不对log_vars使用权重衰减
+            'lr': learning_rate,
+            'weight_decay': 0.0,
             'betas':(0.9, 0.95),
         }])
         
-        # Learning rate scheduler
-        self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-            self.optimizer,
-            T_max=len(train_loader) * 100  # Assuming 100 epochs max
-        )
+        # Learning rate scheduler, based on num_epochs, init on first time run
+        num_training_steps = len(train_loader) * num_epochs
+        num_warmup_steps = int(0.1 * num_training_steps)
+        def lr_lambda(current_step):
+            if current_step < num_warmup_steps:
+                return float(current_step) / float(max(1, num_warmup_steps))
+            progress = float(current_step - num_warmup_steps) / float(max(1, num_training_steps - num_warmup_steps))
+            return 0.5 * (1.0 + math.cos(math.pi * progress))
+        self.scheduler = torch.optim.lr_scheduler.LambdaLR(self.optimizer, lr_lambda)
         
         # Training state
         self.epoch = 0
@@ -235,10 +244,10 @@ class Trainer:
         self.val_losses = checkpoint['val_losses']
         self.best_val_loss = checkpoint['best_val_loss']
         
-        print(f"Loaded checkpoint from epoch {self.epoch}")
+        print(f"Loaded checkpoint from epoch {self.epoch}, step {self.global_step}")
         return True
     
-    def train(self, num_epochs: int, save_every: int = 5):
+    def train(self):
         """
         Train the model for multiple epochs.
         
@@ -249,9 +258,11 @@ class Trainer:
         print(f"Training on {self.device}")
         print(f"Model has {self.model.get_num_params():,} parameters")
         
+        num_epochs = self.num_epochs
+        
         start_epoch = self.epoch # 1-indexed, 真受不了 0
 
-        for epoch in range(start_epoch + 1, start_epoch + num_epochs + 1):
+        for epoch in range(start_epoch + 1, num_epochs + 1): # 总数，而非叠加
             self.epoch = epoch
             
             # Train
@@ -273,7 +284,7 @@ class Trainer:
                         print("")
             
             # Save checkpoint periodically
-            if epoch % save_every == 0:
+            if epoch % self.save_every == 0:
                 self.save_checkpoint(f'checkpoint_epoch_{epoch}.pt')
             self.save_checkpoint(f'checkpoint_quicksave.pt')
 
@@ -314,6 +325,8 @@ def main():
     parser.add_argument('--seq_length', type=int, default=512, help='Sequence length')
     parser.add_argument('--batch_size', type=int, default=32, help='Batch size')
     parser.add_argument('--num_epochs', type=int, default=50, help='Number of epochs')
+    # 到底要不要持久化呢
+    # 还是算了吧，
     
     parser.add_argument('--lr', type=float, default=3e-4, help='Learning rate')
     parser.add_argument('--d_model', type=int, default=512, help='Model dimension')
@@ -324,9 +337,6 @@ def main():
     parser.add_argument('--save_every', type=int, default=5, help='Checkpoints saving frequency')
     parser.add_argument('--chunk_stride', type=int, default=256, help='Stride for sequence chunking')
     parser.add_argument('--log_interval', type=int, default=500, help='Log frenqeuency (in steps)')
-
-
-
 
     parser.add_argument(
         '--debug',
@@ -367,7 +377,10 @@ def main():
     
     # Initialize tokenizer
     print("Initializing tokenizer...")
-    tokenizer = MIDITokenizer() # go default, check tokenizer.py for params
+    tokenizer = MIDITokenizer()
+    
+    # go default, check tokenizer.py for params
+    # 我并不需要怎么重建这个 tokenizer
 
     print(f"Vocabulary size: {tokenizer.vocab_size}")
     print(f"Total Size: {tokenizer.vocab_size_full}")
@@ -514,11 +527,13 @@ def main():
         "top_p": 0.9,
         "seed": None,
         "piano_channels": '0, 1, 2, 3, 4, 5'
-    }
+    } # 这是给Visualizer的Generation准备的
     
     # Initialize trainer
     trainer = Trainer(
         model=model,
+        num_epochs=args.num_epochs, # 还用于重建 lambda scheduler
+        save_every=args.save_every,
         vocab_size=list(tokenizer.vocab_size.values()),
         train_loader=train_loader,
         val_loader=val_loader,
@@ -527,13 +542,9 @@ def main():
         vis=TrainVisualizer(log_dir = args.log_dir, log_interval=args.log_interval, generation_args=generation_args, preload_model=model)
     )
     
-    # Resume from checkpoint if requested
     if args.resume:
         trainer.load_checkpoint(args.resume)
-    
-    # Train
-    trainer.train(num_epochs=args.num_epochs, save_every=args.save_every)
-    
+    trainer.train()
     if trainer.vis is not None:
         trainer.vis.close()
 
