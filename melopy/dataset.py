@@ -40,7 +40,7 @@ class MIDIDataset(Dataset):
         seq_length: int = 512,
         stride: Optional[int] = None,
         piano_channels: Optional[List[int]] = None,
-        num_workers: int = 16
+        num_workers: int = 8,
     ):
         """
         Args:
@@ -91,8 +91,13 @@ class MIDIDataset(Dataset):
                     tqdm.write(message)
 
         self.sequences = torch.tensor(self.sequences, dtype=torch.uint8)
+        print(f"Created {len(self.sequences)} sequences of length {seq_length}, processing data augmentation twice...")
+
+        # DATA AUGMENTATION BEGIN
+        self.sequences = torch.cat([self.sequences, self.augment_pitch(self.sequences), self.augment_pitch(self.sequences)])
+        # DATA AUGMENTATION END
         
-        print(f"Created {len(self.sequences)} sequences of length {seq_length}")
+        print(f"Created {len(self.sequences)} sequences of length {seq_length} in total.")
     
     # ===============================================================
     # Save / Load Methods Begin
@@ -165,7 +170,31 @@ class MIDIDataset(Dataset):
             'input_ids': input_ids,
             'target_ids': target_ids
         }
+    def augment_pitch(self, sequences, pitch_index=0):
+        pitch_min = self.tokenizer.token_to_id["note"][f"NOTE_{self.tokenizer.min_pitch}"]
+        pitch_max = self.tokenizer.token_to_id["note"][f"NOTE_{self.tokenizer.max_pitch}"]
 
+        # sequences: (N, L, 4)
+        seq_pitch = sequences[..., pitch_index].to(torch.int16)
+
+        seq_pitch_min = seq_pitch.min(dim=1).values
+        seq_pitch_max = seq_pitch.max(dim=1).values
+
+        # 每个 sequence 可偏移范围
+        down_range = torch.clamp(seq_pitch_min - pitch_min, min=0, max = 12)
+        up_range   = torch.clamp(pitch_max - seq_pitch_max, min=0, max = 12)
+
+        # 随机 float ∈ [0,1)，再映射到对应整数偏移范围
+        rand_float = torch.rand(sequences.size(0), device=sequences.device)
+        offsets = (rand_float * (up_range + down_range + 1).to(torch.float32) - down_range.to(torch.float32)).floor().to(torch.int16)
+
+        mask = offsets != 0
+        offsets = offsets[mask][:, None]
+        sequences = sequences[mask]
+        seq_pitch = sequences[..., pitch_index].to(torch.int16)
+        
+        sequences[..., pitch_index] = (seq_pitch + offsets).to(torch.uint8)
+        return sequences
 
 def get_midi_files(directory: str, recursive: bool = True) -> List[str]:
     """

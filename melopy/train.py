@@ -8,7 +8,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, Subset, ConcatDataset
 import os
 import json
-from tqdm import tqdm
+from tqdm.auto import tqdm
 import argparse
 
 from typing import Optional, List
@@ -19,7 +19,6 @@ from tokenizer import MIDITokenizer
 from dataset import MIDIDataset, get_midi_files
 from model import MIDITransformer, UncertaintyLossWrapper
 from visualizer import TrainVisualizer
-
 
 class Trainer:
     """Trainer class for MIDI GPT model."""
