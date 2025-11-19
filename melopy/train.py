@@ -222,7 +222,7 @@ class Trainer:
             model_config = json.load(open(config_path))
             # 重新实例化 model
             # TODO config SAFE?
-            self.model = MIDITransformer(**model_config)
+            self.model = MIDITransformer(**model_config).to(self.device)
         
         checkpoint = torch.load(path, map_location=self.device)
         self.model.load_state_dict(checkpoint['model_state_dict'])

@@ -14,7 +14,7 @@ from model import MIDITransformer
 from generate import GenerationWorkflow
 
 class TrainVisualizer:
-    def __init__(self, log_dir="checkpoints/tensorboard", sample_rate=16000, fps=100,
+    def __init__(self, log_dir="checkpoints/tensorboard", sample_rate=44100, fps=100,
                  max_audio_seconds=20, ema_decay=0.98, log_interval = 500, generation_args = {}, preload_model: MIDITransformer | None = None):
         """
         ema_decay 用于平滑曲线，例如 avg_loss。
