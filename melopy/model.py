@@ -62,7 +62,7 @@ class MultiHeadAttention(nn.Module):
         
         self.qkv_proj = nn.Linear(d_model, 3 * d_model)
         self.out_proj = nn.Linear(d_model, d_model)
-        self.dropout = nn.Dropout(dropout)
+        self.dropout_layer = nn.Dropout(dropout)
         
         self.scale = self.head_dim ** -0.5
         self.rope = RotaryEmbedding(self.head_dim, max_seq_len=max_seq_len)
@@ -93,7 +93,7 @@ class MultiHeadAttention(nn.Module):
             attn = attn.masked_fill(mask == 0, float('-inf'))
         
         attn = F.softmax(attn, dim=-1)
-        attn = self.dropout(attn)
+        attn = self.dropout_layer(attn)
         
         # Apply attention to values
         out = torch.matmul(attn, v)
@@ -109,10 +109,10 @@ class FeedForward(nn.Module):
         super().__init__()
         self.linear1 = nn.Linear(d_model, d_ff)
         self.linear2 = nn.Linear(d_ff, d_model)
-        self.dropout = nn.Dropout(dropout)
+        self.dropout_layer = nn.Dropout(dropout)
     
     def forward(self, x):
-        return self.linear2(self.dropout(F.gelu(self.linear1(x))))
+        return self.linear2(self.dropout_layer(F.gelu(self.linear1(x))))
 
 
 class TransformerBlock(nn.Module):
@@ -124,16 +124,16 @@ class TransformerBlock(nn.Module):
         self.feed_forward = FeedForward(d_model, d_ff, dropout)
         self.norm1 = nn.LayerNorm(d_model)
         self.norm2 = nn.LayerNorm(d_model)
-        self.dropout = nn.Dropout(dropout)
+        self.dropout_layer = nn.Dropout(dropout)
     
     def forward(self, x, mask):
         # Self-attention with residual connection
         attn_out = self.attention(self.norm1(x), mask)
-        x = x + self.dropout(attn_out)
+        x = x + self.dropout_layer(attn_out)
         
         # Feed-forward with residual connection
         ff_out = self.feed_forward(self.norm2(x))
-        x = x + self.dropout(ff_out)
+        x = x + self.dropout_layer(ff_out)
         
         return x
     
@@ -180,6 +180,11 @@ class MIDITransformer(nn.Module):
         self.d_model = d_model
         self.max_seq_length = max_seq_length
         self.pad_token_id = pad_token_id
+        self.num_layers = num_layers
+        self.num_heads = num_heads
+        self.d_ff = d_ff
+        self.dropout = dropout
+        
         
         # Token embedding
         self.embeds = nn.ModuleList([
@@ -202,7 +207,7 @@ class MIDITransformer(nn.Module):
         self.lm_head = nn.Linear(d_model, self.vocab_size_full, bias=False)
         
         # Dropout
-        self.dropout = nn.Dropout(dropout)
+        self.dropout_layer = nn.Dropout(dropout)
         
         # Initialize weights
         self._init_weights()
@@ -254,7 +259,7 @@ class MIDITransformer(nn.Module):
         # PE (deprecated, in favor of RoPE)
         x = x + self.pos_embedding[:, :seq_len, :]
 
-        x = self.dropout(x)
+        x = self.dropout_layer(x)
         
         # Get causal mask
         mask = self.get_buffer("causal_mask")[:, :, :seq_len, :seq_len]

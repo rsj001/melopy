@@ -123,7 +123,9 @@ def generate(
 def GenerationWorkflow(use_parser: bool = True, user_args: dict = {}, preload_model: MIDITransformer | None = None, preload_prompt: torch.Tensor | None = None):
     if use_parser:
         parser = argparse.ArgumentParser(description='Generate MIDI using trained model')
-        parser.add_argument('--checkpoint', type=str, default='checkpoints/best_model.pt', help='Path to model checkpoint')
+        
+        parser.add_argument('--checkpoint_dir', type=str, default='checkpoints', help='Directory of checkpoints')
+        parser.add_argument('--checkpoint_name', type=str, default='best_model.pt', help='Filename of model checkpoint')
         parser.add_argument('--output', type=str, default='generated.mid', help='Output MIDI file path')
         parser.add_argument('--prompt_midi', type=str, default=None, help='Optional MIDI file to use as prompt/seed')
         parser.add_argument('--prompt_length', type=int, default=None, help='Number of tokens to use from prompt (default: all)')
@@ -139,7 +141,8 @@ def GenerationWorkflow(use_parser: bool = True, user_args: dict = {}, preload_mo
     else:
         args = user_args
         default = {
-            "checkpoint": "checkpoints/best_model.pt",
+            "checkpoint_dir": "checkpoints",
+            "checkpoint_name": "best_model.pt",
             "output": "generated.mid",
             "prompt_midi": None,
             "prompt_length": None,
@@ -165,8 +168,7 @@ def GenerationWorkflow(use_parser: bool = True, user_args: dict = {}, preload_mo
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
     # Load tokenizer config
-    checkpoint_dir = os.path.dirname(args.checkpoint)
-    tokenizer_config_path = os.path.join(checkpoint_dir, 'tokenizer_config.json')
+    tokenizer_config_path = os.path.join(args.checkpoint_dir, 'tokenizer_config.json')
     
     if not os.path.exists(tokenizer_config_path):
         print(f"Tokenizer config not found at {tokenizer_config_path}")
@@ -181,21 +183,22 @@ def GenerationWorkflow(use_parser: bool = True, user_args: dict = {}, preload_mo
         model = preload_model
     else:
         # Load checkpoint
-        if not os.path.exists(args.checkpoint):
-            print(f"Checkpoint not found at {args.checkpoint}")
+        checkpoint_path = os.path.join(args.checkpoint_dir, args.checkpoint_name)
+        if not os.path.exists(checkpoint_path):
+            print(f"Checkpoint not found at {checkpoint_path}")
             return
-        print(f"Loading checkpoint from {args.checkpoint}")
-        checkpoint = torch.load(args.checkpoint, map_location=device)
-        model = MIDITransformer(
-            vocab_size=list(tokenizer.vocab_size.values()),
-            d_model=512,
-            num_layers=6,
-            num_heads=8,
-            d_ff=512 * 4,
-            max_seq_length=512,
-            dropout=0.12,
-            pad_token_id=0
-        )
+        print(f"Loading checkpoint from {checkpoint_path}")
+        checkpoint = torch.load(checkpoint_path, map_location=device)
+        
+        config_path = os.path.join(args.checkpoint_dir, "model_config.json")
+        if not os.path.exists(config_path):
+            print(f"Checkpoint config {config_path} not found. Cannot load model.")
+            return 
+
+        model_config = json.load(open(config_path))
+        # 重新实例化 model
+        # TODO config SAFE?
+        model = MIDITransformer(**model_config)
         model.load_state_dict(checkpoint['model_state_dict'])
         print(f"Loaded model from epoch {checkpoint['epoch']}")
 

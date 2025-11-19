@@ -176,9 +176,22 @@ class Trainer:
     
     def save_checkpoint(self, filename):
         """Save model checkpoint."""
+
+        def build_config_from_attrs(obj, attr_names):
+            config = {}
+            for name in attr_names:
+                if not hasattr(obj, name):
+                    raise AttributeError(f"Object has no attribute '{name}'")
+                config[name] = getattr(obj, name)
+            return config
+        
+        # HARDCODE
+        model_config = build_config_from_attrs(self.model, ["vocab_size", "d_model", "num_layers", "num_heads", "d_ff", "max_seq_length", "dropout", "pad_token_id"])
+        with open(os.path.join(self.checkpoint_dir, "model_config.json"), "w") as f:
+            json.dump(model_config, f, indent=4)
+            
         checkpoint = {
             'uncertainty_state_dict': self.uncertainty.state_dict(),
-
             'epoch': self.epoch,
             'global_step': self.global_step,
             'model_state_dict': self.model.state_dict(),
@@ -194,10 +207,22 @@ class Trainer:
     
     def load_checkpoint(self, filename):
         """Load model checkpoint."""
+        
+        
         path = os.path.join(self.checkpoint_dir, filename)
+        config_path = os.path.join(self.checkpoint_dir, "model_config.json")
         if not os.path.exists(path):
             print(f"Checkpoint {path} not found")
             return False
+        
+        # migration, checkpoint found but no json, use 
+        if not os.path.exists(config_path):
+            print(f"Checkpoint config {config_path} not found. Use parameters from console.")
+        else:
+            model_config = json.load(open(config_path))
+            # 重新实例化 model
+            # TODO config SAFE?
+            self.model = MIDITransformer(**model_config)
         
         checkpoint = torch.load(path, map_location=self.device)
         self.model.load_state_dict(checkpoint['model_state_dict'])
@@ -289,10 +314,13 @@ def main():
     parser.add_argument('--seq_length', type=int, default=512, help='Sequence length')
     parser.add_argument('--batch_size', type=int, default=32, help='Batch size')
     parser.add_argument('--num_epochs', type=int, default=50, help='Number of epochs')
+    
     parser.add_argument('--lr', type=float, default=3e-4, help='Learning rate')
     parser.add_argument('--d_model', type=int, default=512, help='Model dimension')
     parser.add_argument('--num_layers', type=int, default=6, help='Number of transformer layers')
     parser.add_argument('--num_heads', type=int, default=8, help='Number of attention heads')
+    parser.add_argument('--dropout', type=float, default=0.12, help='Dropout')
+    
     parser.add_argument('--save_every', type=int, default=5, help='Checkpoints saving frequency')
     parser.add_argument('--chunk_stride', type=int, default=256, help='Stride for sequence chunking')
     parser.add_argument('--log_interval', type=int, default=500, help='Log frenqeuency (in steps)')
@@ -468,15 +496,15 @@ def main():
         num_heads=args.num_heads,
         d_ff=args.d_model * 4,
         max_seq_length=args.seq_length,
-        dropout=0.12,
+        dropout=args.dropout,
         pad_token_id=0
         # 严格意义上这不是 token
     )
 
     os.makedirs(args.result_dir, exist_ok=True)
     generation_args = {
-        "checkpoint": os.path.join(args.checkpoint_dir, "checkpoint_quicksave.pt"),
-        "output_dir": args.result_dir,
+        # Checkpoint options are useless here
+        "output_dir": args.result_dir, # this is processed in visualizer, not generator
         "output": "This will be forced to change in visualizer.mid",
         "prompt_midi": None,
         "prompt_length": None,
