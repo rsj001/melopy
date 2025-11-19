@@ -238,10 +238,8 @@ class MIDITransformer(nn.Module):
                 targets: torch.Tensor | None = None, 
                 token_id_left: int = 3, 
                 label_smoothing: bool = True,
-                center_boost: list[float] | None = None, 
                 radius: list[int] | None = None, 
-                alpha: list[float] | None = None, 
-                distribution: list[str] | None = None):
+                alpha: list[float] | None = None):
         """
         Forward pass.
 
@@ -282,7 +280,7 @@ class MIDITransformer(nn.Module):
             return logits
         
         if label_smoothing:
-            assert radius != None and alpha != None and distribution != None and center_boost != None
+            assert radius != None and alpha != None
             
             logits_T = logits.view(-1, self.vocab_size_full)  # [N, V_full]
             targets_T = targets.view(-1, token_dim)           # [N, token_dim]
@@ -322,21 +320,8 @@ class MIDITransformer(nn.Module):
 
                     distances = torch.abs(neighbor_idx - lb_soft.unsqueeze(1)).float()   # [M, K]
                     
-                    if distribution[i] == "triangle":
-                        weights = alpha[i] * (radius[i] - distances + 1)
-                    elif distribution[i] == "inverse":
-                        weights = 1.0 / (1.0 + alpha[i] * distances)
-                    elif distribution[i] == "gauss":
-                        weights = torch.exp(-0.5 * (distances / alpha[i])**2)
-                    else:
-                        raise ValueError("Unsupported distribution")
-                    
-                    if center_boost[i] != 0.0:
-                        center_mask = (neighbor_idx == lb_soft.unsqueeze(1))
-                        weights = weights + center_boost[i] * center_mask.float()
+                    weights = torch.exp(-0.5 * (distances / alpha[i])**2)
                     weights = weights / weights.sum(dim=1, keepdim=True)      # [M, K]
-                    
-                    
 
                     # gather logits
                     logits_selected = lg_soft.gather(1, neighbor_idx)        # [M, K]

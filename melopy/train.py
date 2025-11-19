@@ -95,10 +95,8 @@ class Trainer:
             
             # Forward pass
             output = self.model(input_ids, target_ids, token_id_left = 3, 
-                                center_boost = [12, 0, 0, 12],
-                                radius = [2, 2, 4, 2], 
-                                alpha = [12, 0.36, 0.45, 12], 
-                                distribution = ["inverse", "gauss", "gauss", "inverse"],
+                                radius = [4, 4, 6, 4], 
+                                alpha = [0.3, 0.35, 0.48, 0.3],
                                 label_smoothing = True
                                 )
             logits, losses = output
