@@ -20,6 +20,7 @@ def worker(args):
             elif len(chunk) > seq_length // 4:
                 padding_needed = (seq_length + 1) - len(chunk)
                 padded_chunk = chunk + [pad_token] * padding_needed
+                # print(f"{padded_chunk}")
                 return_val.append(padded_chunk)
                 
     except Exception as e:
@@ -170,15 +171,23 @@ class MIDIDataset(Dataset):
             'input_ids': input_ids,
             'target_ids': target_ids
         }
-    def augment_pitch(self, sequences, pitch_index=0):
+    def augment_pitch(self, sequences, pitch_index=0, special_ids={0,1,2}):
         pitch_min = self.tokenizer.token_to_id["note"][f"NOTE_{self.tokenizer.min_pitch}"]
         pitch_max = self.tokenizer.token_to_id["note"][f"NOTE_{self.tokenizer.max_pitch}"]
 
-        # sequences: (N, L, 4)
         seq_pitch = sequences[..., pitch_index].to(torch.int16)
 
-        seq_pitch_min = seq_pitch.min(dim=1).values
-        seq_pitch_max = seq_pitch.max(dim=1).values
+        valid_mask = torch.ones_like(seq_pitch, dtype=torch.bool)
+        for sid in special_ids:
+            valid_mask &= (seq_pitch != sid)
+        
+        any_token = valid_mask.any(dim=1)
+        sequences = sequences[any_token]
+        seq_pitch = seq_pitch[any_token]
+        valid_mask = valid_mask[any_token]
+
+        seq_pitch_min = torch.where(valid_mask, seq_pitch, pitch_max).min(dim=1).values
+        seq_pitch_max = torch.where(valid_mask, seq_pitch, pitch_min).max(dim=1).values
 
         # 每个 sequence 可偏移范围
         down_range = torch.clamp(seq_pitch_min - pitch_min, min=0, max = 12)
@@ -188,12 +197,15 @@ class MIDIDataset(Dataset):
         rand_float = torch.rand(sequences.size(0), device=sequences.device)
         offsets = (rand_float * (up_range + down_range + 1).to(torch.float32) - down_range.to(torch.float32)).floor().to(torch.int16)
 
-        mask = offsets != 0
-        offsets = offsets[mask][:, None]
-        sequences = sequences[mask]
+        keep = offsets != 0
+        offsets = offsets[keep][:, None]
+        valid_mask = valid_mask[keep]
+        sequences = sequences[keep]
         seq_pitch = sequences[..., pitch_index].to(torch.int16)
-        
-        sequences[..., pitch_index] = (seq_pitch + offsets).to(torch.uint8)
+        sequences[..., pitch_index] = torch.where(valid_mask, seq_pitch + offsets, seq_pitch).to(torch.uint8)
+
+        # print(sequences)
+
         return sequences
 
 def get_midi_files(directory: str, recursive: bool = True) -> List[str]:

@@ -47,7 +47,7 @@ class MIDITokenizer:
         current_id = 0
         # Special tokens
 
-        self.special_token = ['<PAD>', '<BOS>', '<EOS>', '<MASK>']
+        self.special_token = ['<PAD>', '<BOS>', '<EOS>']
 
         self.vocab_full = {"note": self.special_token + [f'NOTE_{pitch}' for pitch in range(self.min_pitch, self.max_pitch + 1)],
                       "duration": self.special_token + [f'DURATION_{dur_bin}' for dur_bin in duration_bins],
