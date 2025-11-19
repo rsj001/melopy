@@ -328,6 +328,7 @@ def main():
     )
 
     parser.add_argument('--piano_channels', type=str, default='0,1,2,3,4,5', help='Comma-separated list of MIDI channels for piano (default: 0)')
+    parser.add_argument('--cpu_num_workers', type=int, default=16, help='The number of CPU workers for pre-processing data')
 
     # only chunk_stride data_dir_with_weights seq_length piano_channels matters in preprocessing
     # TODO: 把训练逻辑和预处理分开
@@ -409,7 +410,8 @@ def main():
             tokenizer=tokenizer,
             seq_length=args.seq_length,
             piano_channels=piano_channels,
-            stride=args.chunk_stride
+            stride=args.chunk_stride,
+            num_workers=args.cpu_num_workers
         )
         if len(dataset) == 0:
             print("No sequences created from MIDI files. Check your data.")
