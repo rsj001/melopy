@@ -234,10 +234,17 @@ class MIDITransformer(nn.Module):
         # Initialize positional embeddings
         nn.init.normal_(self.pos_embedding, mean=0.0, std=0.02)
     
-    def forward(self, input_ids: torch.Tensor, targets: torch.Tensor | None = None):
+    def forward(self, input_ids: torch.Tensor, 
+                targets: torch.Tensor | None = None, 
+                token_id_left: int = 3, 
+                label_smoothing: bool = True,
+                center_boost: list[float] | None = None, 
+                radius: list[int] | None = None, 
+                alpha: list[float] | None = None, 
+                distribution: list[str] | None = None):
         """
         Forward pass.
-        
+
         Args:
             input_ids: (batch_size, seq_len, token_dim)
             targets: (batch_size, seq_len, token_dim) - optional, for computing loss
@@ -255,7 +262,6 @@ class MIDITransformer(nn.Module):
         # Linear pooling
         x = self.linear_pooling([self.embeds[i](input_ids[..., i]) for i in range(token_dim)])
         
-        
         # PE (deprecated, in favor of RoPE)
         x = x + self.pos_embedding[:, :seq_len, :]
 
@@ -272,8 +278,83 @@ class MIDITransformer(nn.Module):
         x = self.norm(x)
         logits = self.lm_head(x)
         
-        # Compute loss if targets provided
-        if targets is not None:
+        if targets is None:
+            return logits
+        
+        if label_smoothing:
+            assert radius != None and alpha != None and distribution != None and center_boost != None
+            
+            logits_T = logits.view(-1, self.vocab_size_full)  # [N, V_full]
+            targets_T = targets.view(-1, token_dim)           # [N, token_dim]
+
+            device = logits_T.device
+            dtype = logits_T.dtype
+
+            offset = 0
+            losses = []
+
+            for i, v in enumerate(self.vocab_size):
+                lg = logits_T[:, offset:offset+v]   # [N, v]
+                lb = targets_T[:, i]               # [N]
+                offset += v
+
+                mask_valid = (lb != self.pad_token_id)
+                if mask_valid.sum() == 0:
+                    losses.append(torch.tensor(0., device=device, dtype=dtype))
+                    continue
+                mask_soft = lb >= token_id_left   # >=3 soft target
+                mask_onehot = mask_valid & (~mask_soft)  # 0,1,2 one-hot (actually, just 1,2)
+                loss_vals = []
+
+                # one-hot CE
+                if mask_onehot.any():
+                    loss_onehot = F.cross_entropy(lg[mask_onehot], lb[mask_onehot], ignore_index=self.pad_token_id)
+                    loss_vals.append(loss_onehot)
+
+                # soft-target CE
+                if mask_soft.any():
+                    lb_soft = lb[mask_soft]   # [M]
+                    lg_soft = lg[mask_soft]   # [M, v]
+
+                    # 构建邻域索引，clamp 到合法范围
+                    offsets_range = torch.arange(-radius[i], radius[i]+1, device=device)
+                    neighbor_idx = (lb_soft.unsqueeze(1) + offsets_range.unsqueeze(0)).clamp(token_id_left, v-1) # [M, 2R+1]
+
+                    distances = torch.abs(neighbor_idx - lb_soft.unsqueeze(1)).float()   # [M, K]
+                    
+                    if distribution[i] == "triangle":
+                        weights = alpha[i] * (radius[i] - distances + 1)
+                    elif distribution[i] == "inverse":
+                        weights = 1.0 / (1.0 + alpha[i] * distances)
+                    elif distribution[i] == "gauss":
+                        weights = torch.exp(-0.5 * (distances / alpha[i])**2)
+                    else:
+                        raise ValueError("Unsupported distribution")
+                    
+                    weights = weights / weights.sum(dim=1, keepdim=True)      # [M, K]
+                    
+                    if center_boost[i] != 0.0:
+                        center_mask = (neighbor_idx == lb_soft.unsqueeze(1))
+                        weights = weights + center_boost[i] * center_mask.float()
+
+                    # gather logits
+                    logits_selected = lg_soft.gather(1, neighbor_idx)        # [M, K]
+                    log_probs_selected = logits_selected - lg_soft.logsumexp(dim=1, keepdim=True) # [M, K]
+
+                    loss_soft = -(weights * log_probs_selected).sum(dim=1).mean()
+                    loss_vals.append(loss_soft)
+
+                # 合并 one-hot 与 soft
+                if len(loss_vals) == 1:
+                    losses.append(loss_vals[0])
+                else:
+                    # 按样本数量加权平均
+                    n_onehot = mask_onehot.sum().item()
+                    n_soft = mask_soft.sum().item()
+                    loss_vals_combined = (loss_vals[0]*n_onehot + loss_vals[1]*n_soft) / (n_onehot + n_soft)
+                    losses.append(loss_vals_combined)
+            return (logits, torch.stack(losses))
+        else:
             logits_T = logits.view(-1, self.vocab_size_full)
             targets_T = targets.view(-1, token_dim)
             offset = 0
@@ -288,9 +369,7 @@ class MIDITransformer(nn.Module):
                     loss = F.cross_entropy(lg, lb, ignore_index=self.pad_token_id)
                 losses.append(loss)
             return (logits, torch.stack(losses))
-        else:
-            return logits
-    
+        
     def get_num_params(self):
         """Get number of parameters in the model."""
         return sum(p.numel() for p in self.parameters())

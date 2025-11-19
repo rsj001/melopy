@@ -86,7 +86,7 @@ def generate(
         # Get model predictions
         # Only use the last max_seq_length tokens as input
         input_seq = generated[:, -model.max_seq_length:]
-        logits = model(input_seq)
+        logits = model(input_seq, label_smoothing = False)
 
         offset = 0
         next_token_full = torch.tensor([], dtype=torch.long, device=device)

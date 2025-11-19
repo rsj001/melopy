@@ -94,7 +94,12 @@ class Trainer:
             target_ids = batch['target_ids'].to(self.device)
             
             # Forward pass
-            output = self.model(input_ids, target_ids)
+            output = self.model(input_ids, target_ids, token_id_left = 3, 
+                                center_boost = [12, 0, 0, 12],
+                                radius = [2, 2, 4, 2], 
+                                alpha = [12, 0.36, 0.45, 12], 
+                                distribution = ["inverse", "gauss", "gauss", "inverse"]
+                                )
             logits, losses = output
             
             loss = self.uncertainty(losses)
@@ -171,7 +176,7 @@ class Trainer:
                 input_ids = batch['input_ids'].to(self.device)
                 target_ids = batch['target_ids'].to(self.device)
                 
-                output = self.model(input_ids, target_ids)
+                output = self.model(input_ids, target_ids, label_smoothing = False)
                 logits, losses = output
                 total_loss += self.uncertainty(losses)
         
