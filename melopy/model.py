@@ -6,13 +6,13 @@ from typing import List
 
 # 一个带正则化系数 ln x 的线性组合
 # 仍然存在模型刻意降低 loss 大的参数的风险
-# class UncertaintyLossWrapper(nn.Module):
-#     def __init__(self, num_tasks, device):
-#         super().__init__()
-#         self.log_vars = nn.Parameter(torch.zeros(num_tasks, device=device))
+class UncertaintyLossWrapper(nn.Module):
+    def __init__(self, num_tasks, device):
+        super().__init__()
+        self.log_vars = nn.Parameter(torch.zeros(num_tasks, device=device))
         
-#     def forward(self, losses):
-#         return sum(torch.exp(-self.log_vars) * losses + self.log_vars)
+    def forward(self, losses):
+        return sum(torch.exp(-self.log_vars) * losses + self.log_vars)
     
 
 class RotaryEmbedding(nn.Module):

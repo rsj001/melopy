@@ -18,7 +18,7 @@ import datetime
 
 from tokenizer import MIDITokenizer
 from dataset import MIDIDataset, get_midi_files
-from model import MIDITransformer
+from model import MIDITransformer, UncertaintyLossWrapper
 from visualizer import TrainVisualizer
 
 class Trainer:
@@ -48,11 +48,9 @@ class Trainer:
         self.vocab_size = vocab_size
         self.num_tasks = len(vocab_size)
         self.num_epochs = num_epochs
-        
         # HARDCODED
         self.loss_weights = torch.tensor([1.5, 0.6, 0.4, 1.0] ,device=device)
-
-        # self.uncertainty = UncertaintyLossWrapper(self.num_tasks, device)
+        self.uncertainty = UncertaintyLossWrapper(self.num_tasks, device)
         
         os.makedirs(checkpoint_dir, exist_ok=True)
         
@@ -62,6 +60,11 @@ class Trainer:
             'lr': learning_rate,
             'weight_decay': weight_decay,
             'betas':(0.9, 0.98),
+        },{
+            'params': self.uncertainty.parameters(),
+            'lr': learning_rate,
+            'weight_decay': 0.0,
+            'betas':(0.9, 0.95),
         }])
         
         # Learning rate scheduler, based on num_epochs, init on first time run
@@ -204,7 +207,7 @@ class Trainer:
             json.dump(model_config, f, indent=4)
             
         checkpoint = {
-            # 'uncertainty_state_dict': self.uncertainty.state_dict(),
+            'uncertainty_state_dict': self.uncertainty.state_dict(),
             'epoch': self.epoch,
             'global_step': self.global_step,
             'model_state_dict': self.model.state_dict(),
@@ -239,7 +242,7 @@ class Trainer:
         
         checkpoint = torch.load(path, map_location=self.device)
         self.model.load_state_dict(checkpoint['model_state_dict'])
-        # self.uncertainty.load_state_dict(checkpoint['uncertainty_state_dict'])
+        self.uncertainty.load_state_dict(checkpoint['uncertainty_state_dict'])
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
         self.epoch = checkpoint['epoch']
