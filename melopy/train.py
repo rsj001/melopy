@@ -18,7 +18,7 @@ import datetime
 
 from tokenizer import MIDITokenizer
 from dataset import MIDIDataset, get_midi_files
-from model import MIDITransformer, UncertaintyLossWrapper
+from model import MIDITransformer
 from visualizer import TrainVisualizer
 
 class Trainer:
@@ -48,8 +48,9 @@ class Trainer:
         self.vocab_size = vocab_size
         self.num_tasks = len(vocab_size)
         self.num_epochs = num_epochs
+        self.loss_weights = torch.tensor([1.5, 0.6, 0.4, 1.0] ,device=device)
 
-        self.uncertainty = UncertaintyLossWrapper(self.num_tasks, device)
+        # self.uncertainty = UncertaintyLossWrapper(self.num_tasks, device)
         
         os.makedirs(checkpoint_dir, exist_ok=True)
         
@@ -59,11 +60,6 @@ class Trainer:
             'lr': learning_rate,
             'weight_decay': weight_decay,
             'betas':(0.9, 0.98),
-        },{
-            'params': self.uncertainty.parameters(),
-            'lr': learning_rate,
-            'weight_decay': 0.0,
-            'betas':(0.9, 0.95),
         }])
         
         # Learning rate scheduler, based on num_epochs, init on first time run
@@ -101,7 +97,8 @@ class Trainer:
                                 )
             logits, losses = output
             
-            loss = self.uncertainty(losses)
+            loss = self.loss_weights @ losses
+            # loss = self.uncertainty(losses)
             
             # Backward pass
             self.optimizer.zero_grad()
@@ -109,7 +106,7 @@ class Trainer:
             
             # Gradient clipping
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
-            torch.nn.utils.clip_grad_norm_(self.uncertainty.parameters(), max_norm=0.1)
+            # torch.nn.utils.clip_grad_norm_(self.uncertainty.parameters(), max_norm=0.1)
             
             self.optimizer.step()
             self.scheduler.step()
@@ -142,7 +139,7 @@ class Trainer:
                         self.vis.log_loss(loss.item(), self.global_step)
                         self.vis.log_lr(self.optimizer, self.global_step)
 
-                        self.vis.log_grad_norm(self.uncertainty, self.global_step, name = 'uncertainty_grad_norm')
+                        # self.vis.log_grad_norm(self.uncertainty, self.global_step, name = 'uncertainty_grad_norm')
                         self.vis.log_grad_norm(self.model, self.global_step)
 
                         self.vis.log_loss(total_loss / (batch_idx + 1), self.global_step, prefix="train", name="avg_loss")
@@ -177,7 +174,8 @@ class Trainer:
                 
                 output = self.model(input_ids, target_ids, label_smoothing = False)
                 logits, losses = output
-                total_loss += self.uncertainty(losses)
+                loss = self.loss_weights @ losses
+                # total_loss += self.uncertainty(losses)
         
         avg_loss = total_loss / len(self.val_loader)
 
@@ -204,7 +202,7 @@ class Trainer:
             json.dump(model_config, f, indent=4)
             
         checkpoint = {
-            'uncertainty_state_dict': self.uncertainty.state_dict(),
+            # 'uncertainty_state_dict': self.uncertainty.state_dict(),
             'epoch': self.epoch,
             'global_step': self.global_step,
             'model_state_dict': self.model.state_dict(),
@@ -239,7 +237,7 @@ class Trainer:
         
         checkpoint = torch.load(path, map_location=self.device)
         self.model.load_state_dict(checkpoint['model_state_dict'])
-        self.uncertainty.load_state_dict(checkpoint['uncertainty_state_dict'])
+        # self.uncertainty.load_state_dict(checkpoint['uncertainty_state_dict'])
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
         self.epoch = checkpoint['epoch']
