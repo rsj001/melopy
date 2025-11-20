@@ -88,23 +88,30 @@ class Trainer:
             self.optimizer.step()
             self.scheduler.step()
             
-            # Update metrics
-            total_loss += loss.item()
-            self.global_step += 1
-            
-            # Update progress bar
-            pbar.set_postfix({
-                'loss': f'{loss.item():.4f}',
-                'lr': f'{self.scheduler.get_last_lr()[0]:.6f}'
-            })
+            with torch.no_grad():
+                pred_ids = torch.argmax(logits, dim=-1)
+                correct = (pred_ids == target_ids).float()
+                accuracy = correct.mean().item()
 
-            # --- TensorBoard metrics ---
-            if self.vis is not None:
-                if self.global_step % self.vis.log_interval == 0:
-                    self.vis.log_loss(loss.item(), self.global_step)
-                    self.vis.log_lr(self.optimizer, self.global_step)
-                    self.vis.log_grad_norm(self.model, self.global_step)
-                    self.vis.log_loss(total_loss / (batch_idx + 1), self.global_step, prefix="train", name="avg_loss")
+                # Update metrics
+                total_loss += loss.item()
+                self.global_step += 1
+
+                # Update progress bar
+                pbar.set_postfix({
+                    'loss': f'{loss.item():.4f}',
+                    'acc': f'{accuracy:.4f}',
+                    'lr': f'{self.scheduler.get_last_lr()[0]:.6f}'
+                })
+
+                # --- TensorBoard metrics ---
+                if self.vis is not None:
+                    if self.global_step % self.vis.log_interval == 0:
+                        self.vis.log_loss(loss.item(), self.global_step)
+                        self.vis.log_lr(self.optimizer, self.global_step)
+                        self.vis.log_grad_norm(self.model, self.global_step)
+                        self.vis.log_loss(total_loss / (batch_idx + 1), self.global_step, prefix="train", name="avg_loss")
+                        self.vis.log_loss(accuracy, self.global_step, prefix="train", name="accuracy")
 
         
         avg_loss = total_loss / len(self.train_loader)
