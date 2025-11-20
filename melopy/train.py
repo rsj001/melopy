@@ -97,11 +97,11 @@ class Trainer:
             target_ids = batch['target_ids'].to(self.device)
             
             # Forward pass
-            output = self.model(input_ids, target_ids
+            output = self.model(input_ids, target_ids,
                                 # , token_id_left = 3, 
                                 # radius = [6, 6, 6, 6], 
                                 # alpha = [0.32, 0.385, 0.48, 0.32],
-                                # label_smoothing = True
+                                label_smoothing = False
                                 )
             logits, losses = output
             
@@ -533,8 +533,8 @@ def main():
         "prompt_length": None,
         "max_length": 256,
         "temperature": 1.1,
-        "top_k": 50,
-        "top_p": 0.9,
+        "top_k": [10, 5, 10, 20],
+        "top_p": [0.6, 0.8, 0.8, 0.6],
         "seed": None,
         "piano_channels": '0, 1, 2, 3, 4, 5'
     } # 这是给Visualizer的Generation准备的

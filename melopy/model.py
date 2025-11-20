@@ -285,7 +285,6 @@ class MIDITransformer(nn.Module):
         
         if label_smoothing:
             assert radius != None and alpha != None
-            
             targets_T = targets.view(-1, token_dim)           # [N, token_dim]
             device = targets_T.device
             dtype = targets_T.dtype
@@ -293,6 +292,7 @@ class MIDITransformer(nn.Module):
             losses = []
 
             for i, lg in enumerate(logits):
+                lg = lg.view(-1, self.vocab_size[i])
                 lb = targets_T[:, i]
                 v = self.vocab_size[i]
 
@@ -342,7 +342,7 @@ class MIDITransformer(nn.Module):
             return (logits, torch.stack(losses))
         else:
             targets_T = targets.view(-1, token_dim)
-            losses = [F.cross_entropy(lg, targets_T[:, i], ignore_index=self.pad_token_id) for i, lg in enumerate(logits)]
+            losses = [F.cross_entropy(lg.view(-1, self.vocab_size[i]), targets_T[:, i], ignore_index=self.pad_token_id) for i, lg in enumerate(logits)]
             return (logits, torch.stack(losses))
         
     def get_num_params(self):
