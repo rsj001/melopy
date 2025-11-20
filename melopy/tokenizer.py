@@ -2,14 +2,12 @@ import mido
 from typing import List, Optional
 from mido import MidiFile, MidiTrack, MetaMessage, bpm2tempo
 
-const_log_bin = [0, 5, 10, 15] + \
-    [i for i in range(20, 400, 10)] + \
+const_log_bin =  [i for i in range(0, 400, 20)] + \
         [i for i in range(400, 1000, 40)] + \
             [i for i in range(1000, 2000, 100)] + \
                 [i for i in range(2000, 3000, 200)] + \
                     [i for i in range(3000, 4200, 300)] + \
-                        [i for i in range(4200, 5000, 400)] + \
-                        [5000, 5500, 6000]
+                        [i for i in range(4200, 5000, 400)] + [5000, 5500, 6000]
 
 const_log_bin_2 = [i for i in range(50, 1500, 50)] + \
                 [i for i in range(1500, 2000, 100)] + \
@@ -40,7 +38,7 @@ class MIDITokenizer:
         self.velocity_bins = velocity_bins
         self.duration_bins = duration_bins
         self.time_shift_bins = time_shift_bins
-        self.version = "1.4"
+        self.version = "1.5"
 
         self.token_to_id = {}
         self.id_to_token = {}

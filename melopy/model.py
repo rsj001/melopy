@@ -204,7 +204,11 @@ class MIDITransformer(nn.Module):
         
         # Output layer
         self.norm = nn.LayerNorm(d_model)
-        self.lm_head = nn.Linear(d_model, self.vocab_size_full, bias=False)
+        
+        self.lm_head = nn.ModuleList([
+            nn.Linear(d_model, size, bias=False)
+            for size in self.vocab_size
+        ])
         
         # Dropout
         self.dropout_layer = nn.Dropout(dropout)
@@ -274,7 +278,7 @@ class MIDITransformer(nn.Module):
         
         # Final layer norm and output projection
         x = self.norm(x)
-        logits = self.lm_head(x)
+        logits = [lm_head(x) for lm_head in self.lm_head]
         
         if targets is None:
             return logits
@@ -282,19 +286,15 @@ class MIDITransformer(nn.Module):
         if label_smoothing:
             assert radius != None and alpha != None
             
-            logits_T = logits.view(-1, self.vocab_size_full)  # [N, V_full]
             targets_T = targets.view(-1, token_dim)           # [N, token_dim]
+            device = targets_T.device
+            dtype = targets_T.dtype
 
-            device = logits_T.device
-            dtype = logits_T.dtype
-
-            offset = 0
             losses = []
 
-            for i, v in enumerate(self.vocab_size):
-                lg = logits_T[:, offset:offset+v]   # [N, v]
-                lb = targets_T[:, i]               # [N]
-                offset += v
+            for i, lg in enumerate(logits):
+                lb = targets_T[:, i]
+                v = self.vocab_size[i]
 
                 mask_valid = (lb != self.pad_token_id)
                 if mask_valid.sum() == 0:
@@ -341,19 +341,8 @@ class MIDITransformer(nn.Module):
                     losses.append(loss_vals_combined)
             return (logits, torch.stack(losses))
         else:
-            logits_T = logits.view(-1, self.vocab_size_full)
             targets_T = targets.view(-1, token_dim)
-            offset = 0
-            losses = []
-            for i, v in enumerate(self.vocab_size):
-                lg = logits_T[:, offset:offset+v]
-                lb = targets_T[:, i]
-                offset += v
-                if (lb != self.pad_token_id).sum() == 0:
-                    loss = torch.tensor(0., device=lg.device, dtype=lg.dtype)
-                else:
-                    loss = F.cross_entropy(lg, lb, ignore_index=self.pad_token_id)
-                losses.append(loss)
+            losses = [F.cross_entropy(lg, targets_T[:, i], ignore_index=self.pad_token_id) for i, lg in enumerate(logits)]
             return (logits, torch.stack(losses))
         
     def get_num_params(self):

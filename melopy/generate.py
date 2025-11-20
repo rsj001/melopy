@@ -86,36 +86,28 @@ def generate(
         # Get model predictions
         # Only use the last max_seq_length tokens as input
         input_seq = generated[:, -model.max_seq_length:]
-        logits = model(input_seq, label_smoothing = False)
+        logits_full = model(input_seq, label_smoothing = False)
 
-        offset = 0
         next_token_full = torch.tensor([], dtype=torch.long, device=device)
 
-        for idx, siz in enumerate(vocab_size):
-            cur_logit = logits[..., offset: offset + siz]
-            offset += siz
-
+        for idx, logits in enumerate(logits_full):
             # Get logits for the last position
-            next_token_logits = cur_logit[0, -1, :] / temperature
+            next_token_logits = logits[0, -1, :] / temperature
         
             # Apply top-k and top-p filtering
-            _top_k = min(siz//2, top_k)
-            if(siz <= 10):
-                _top_k = siz
-            filtered_logits = top_k_top_p_filtering(next_token_logits, top_k=_top_k, top_p=top_p)
+            filtered_logits = top_k_top_p_filtering(next_token_logits, top_k=top_k, top_p=top_p)
         
             # Sample from the filtered distribution
             probs = F.softmax(filtered_logits, dim=-1)
             next_token = torch.multinomial(probs, num_samples=1)
             next_token_full = torch.cat([next_token_full, next_token])
 
-        if (tensor_eos_token == next_token_full).sum() > 0: # at least one eos
+        if (tensor_eos_token == next_token_full).sum() > 0: # at least one eos HARDCODE
             print("\nCUR TOKEN:", next_token_full)
             print("\nSTD EOS:", tokenizer.eos_token)
             generated = torch.cat([generated, tensor_eos_token.unsqueeze(0).unsqueeze(0)], dim=1)     
             break
         generated = torch.cat([generated, next_token_full.unsqueeze(0).unsqueeze(0)], dim=1)        
-        
     
     return generated[0].cpu().tolist()
 

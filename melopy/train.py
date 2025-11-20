@@ -50,7 +50,7 @@ class Trainer:
         self.num_epochs = num_epochs
         # HARDCODED
         self.loss_weights = torch.tensor([1.5, 0.6, 0.4, 1.0] ,device=device)
-        self.uncertainty = UncertaintyLossWrapper(self.num_tasks, device)
+        # self.uncertainty = UncertaintyLossWrapper(self.num_tasks, device)
         
         os.makedirs(checkpoint_dir, exist_ok=True)
         
@@ -60,12 +60,14 @@ class Trainer:
             'lr': learning_rate,
             'weight_decay': weight_decay,
             'betas':(0.9, 0.98),
-        },{
-            'params': self.uncertainty.parameters(),
-            'lr': learning_rate,
-            'weight_decay': 0.0,
-            'betas':(0.9, 0.95),
-        }])
+        },
+        # {
+        #     'params': self.uncertainty.parameters(),
+        #     'lr': learning_rate,
+        #     'weight_decay': 0.0,
+        #     'betas':(0.9, 0.95),
+        # }
+        ])
         
         # Learning rate scheduler, based on num_epochs, init on first time run
         num_training_steps = len(train_loader) * num_epochs
@@ -95,10 +97,11 @@ class Trainer:
             target_ids = batch['target_ids'].to(self.device)
             
             # Forward pass
-            output = self.model(input_ids, target_ids, token_id_left = 3, 
-                                radius = [6, 6, 6, 6], 
-                                alpha = [0.32, 0.385, 0.48, 0.32],
-                                label_smoothing = True
+            output = self.model(input_ids, target_ids
+                                # , token_id_left = 3, 
+                                # radius = [6, 6, 6, 6], 
+                                # alpha = [0.32, 0.385, 0.48, 0.32],
+                                # label_smoothing = True
                                 )
             logits, losses = output
             
@@ -131,16 +134,14 @@ class Trainer:
                 # --- TensorBoard metrics ---
                 if self.vis is not None:
                     if self.global_step % self.vis.log_interval == 0:
-                        logits_by_type = torch.split(logits, self.vocab_size, dim = -1)
                         accuracies = []
-                        for idx, tok in enumerate(logits_by_type):
-                            pred_ids = torch.argmax(tok, dim=-1)
+                        for idx, _logits in enumerate(logits):
                             target_for_type = target_ids[..., idx]
-                            # Compare predictions with targets and compute mean accuracy for this token type
-                            correct = (pred_ids == target_for_type).float()
+                            pred_ids = torch.argmax(_logits, dim=-1)
+                            correct = (pred_ids == target_for_type)[target_for_type != 0].float() # NOTE THIS IS HARDCODED 
                             accuracies.append(correct.mean().item())
 
-                        # NOTE THIS IS HARDCODED 
+                        
                         self.vis.log_loss(loss.item(), self.global_step)
                         self.vis.log_lr(self.optimizer, self.global_step)
 
@@ -149,11 +150,11 @@ class Trainer:
 
                         self.vis.log_loss(total_loss / (batch_idx + 1), self.global_step, prefix="train", name="avg_loss")
 
+                        # NOTE THIS IS HARDCODED
                         self.vis.log_loss(accuracies[0], self.global_step, prefix="train_acc_token", name="pitch")
                         self.vis.log_loss(accuracies[1], self.global_step, prefix="train_acc_token", name="duration")
                         self.vis.log_loss(accuracies[2], self.global_step, prefix="train_acc_token", name="velocity")
                         self.vis.log_loss(accuracies[3], self.global_step, prefix="train_acc_token", name="time_shift")
-
                         self.vis.log_loss(losses[0], self.global_step, prefix="train_loss_token", name="pitch")
                         self.vis.log_loss(losses[1], self.global_step, prefix="train_loss_token", name="duration")
                         self.vis.log_loss(losses[2], self.global_step, prefix="train_loss_token", name="velocity")
@@ -207,7 +208,7 @@ class Trainer:
             json.dump(model_config, f, indent=4)
             
         checkpoint = {
-            'uncertainty_state_dict': self.uncertainty.state_dict(),
+            # 'uncertainty_state_dict': self.uncertainty.state_dict(),
             'epoch': self.epoch,
             'global_step': self.global_step,
             'model_state_dict': self.model.state_dict(),
@@ -244,7 +245,7 @@ class Trainer:
         
         checkpoint = torch.load(path, map_location=self.device)
         self.model.load_state_dict(checkpoint['model_state_dict'])
-        self.uncertainty.load_state_dict(checkpoint['uncertainty_state_dict'])
+        # self.uncertainty.load_state_dict(checkpoint['uncertainty_state_dict'])
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
         self.epoch = checkpoint['epoch']
