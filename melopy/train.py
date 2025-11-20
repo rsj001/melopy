@@ -179,7 +179,7 @@ class Trainer:
                 
                 output = self.model(input_ids, target_ids, label_smoothing = False)
                 logits, losses = output
-                loss = self.loss_weights @ losses
+                total_loss += self.loss_weights @ losses
                 # total_loss += self.uncertainty(losses)
         
         avg_loss = total_loss / len(self.val_loader)
@@ -239,6 +239,8 @@ class Trainer:
             # 重新实例化 model
             # TODO config SAFE?
             self.model = MIDITransformer(**model_config).to(self.device)
+            if self.vis is not None:
+                self.vis.preload_model = self.model
         
         checkpoint = torch.load(path, map_location=self.device)
         self.model.load_state_dict(checkpoint['model_state_dict'])
