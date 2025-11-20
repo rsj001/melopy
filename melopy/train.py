@@ -48,6 +48,8 @@ class Trainer:
         self.vocab_size = vocab_size
         self.num_tasks = len(vocab_size)
         self.num_epochs = num_epochs
+        
+        # HARDCODED
         self.loss_weights = torch.tensor([1.5, 0.6, 0.4, 1.0] ,device=device)
 
         # self.uncertainty = UncertaintyLossWrapper(self.num_tasks, device)
