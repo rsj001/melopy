@@ -527,9 +527,9 @@ def main():
         "prompt_midi": None,
         "prompt_length": None,
         "max_length": 256,
-        "temperature": 1.1,
-        "top_k": [10, 5, 10, 20],
-        "top_p": [0.6, 0.8, 0.8, 0.6],
+        "temperature": 1.2,
+        "top_k": [12, 12, 8, 20],
+        "top_p": [0.9, 0.9, 0.9, 0.9],
         "seed": None,
         "piano_channels": '0, 1, 2, 3, 4, 5'
     } # 这是给Visualizer的Generation准备的
