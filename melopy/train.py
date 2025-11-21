@@ -97,12 +97,7 @@ class Trainer:
             target_ids = batch['target_ids'].to(self.device)
             
             # Forward pass
-            output = self.model(input_ids, target_ids,
-                                # , token_id_left = 3, 
-                                # radius = [6, 6, 6, 6], 
-                                # alpha = [0.32, 0.385, 0.48, 0.32],
-                                label_smoothing = False
-                                )
+            output = self.model(input_ids, target_ids)
             logits, losses = output
             
             loss = self.loss_weights @ losses
@@ -178,7 +173,7 @@ class Trainer:
                 input_ids = batch['input_ids'].to(self.device)
                 target_ids = batch['target_ids'].to(self.device)
                 
-                output = self.model(input_ids, target_ids, label_smoothing = False)
+                output = self.model(input_ids, target_ids)
                 logits, losses = output
                 total_loss += self.loss_weights @ losses
                 # total_loss += self.uncertainty(losses)
@@ -203,7 +198,7 @@ class Trainer:
             return config
         
         # HARDCODE
-        model_config = build_config_from_attrs(self.model, ["vocab_size", "d_model", "num_layers", "num_heads", "d_ff", "max_seq_length", "dropout", "pad_token_id"])
+        model_config = build_config_from_attrs(self.model, ["vocab_size", "d_model", "num_layers", "num_heads", "max_seq_length", "dropout", "pad_token_id"])
         with open(os.path.join(self.checkpoint_dir, "model_config.json"), "w") as f:
             json.dump(model_config, f, indent=4)
             
@@ -487,7 +482,8 @@ def main():
         tokenizer=tokenizer,
         seq_length=args.seq_length,
         piano_channels=piano_channels,
-        stride=args.chunk_stride
+        stride=args.chunk_stride,
+        num_workers=args.cpu_num_workers
     )
     if len(val_dataset) == 0:
         print("No sequences created from MIDI files. Check your data. (val)")
@@ -517,7 +513,6 @@ def main():
         d_model=args.d_model,
         num_layers=args.num_layers,
         num_heads=args.num_heads,
-        d_ff=args.d_model * 4,
         max_seq_length=args.seq_length,
         dropout=args.dropout,
         pad_token_id=0
