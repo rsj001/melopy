@@ -38,7 +38,7 @@ class MIDITokenizer:
         self.velocity_bins = velocity_bins
         self.duration_bins = duration_bins
         self.time_shift_bins = time_shift_bins
-        self.version = "1.5"
+        self.version = "1.6"
 
         self.token_to_id = {}
         self.id_to_token = {}
