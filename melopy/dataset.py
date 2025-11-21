@@ -17,11 +17,11 @@ def worker(args):
             
             if len(chunk) == seq_length + 1:
                 return_val.append(chunk)
-            elif len(chunk) > seq_length // 4:
-                padding_needed = (seq_length + 1) - len(chunk)
-                padded_chunk = chunk + [pad_token] * padding_needed
-                # print(f"{padded_chunk}")
-                return_val.append(padded_chunk)
+            # elif len(chunk) > seq_length // 2:
+            #     padding_needed = (seq_length + 1) - len(chunk)
+            #     padded_chunk = chunk + [pad_token] * padding_needed
+            #     # print(f"{padded_chunk}")
+            #     return_val.append(padded_chunk)
                 
     except Exception as e:
         return [], f"Error processing {midi_file}: {e}"
