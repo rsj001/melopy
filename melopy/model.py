@@ -112,8 +112,18 @@ class MIDITransformer(nn.Module):
         x = self.linear_pooling([self.embeds[i](input_ids[..., i]) for i in range(token_dim)])
         x = self.dropout_layer(x)
         
-        x = self.attn_layer(x)
+        # 随机掩码
+        self.mask_prob = 0.15
+
+        rand = torch.randn(batch_size, seq_len, device = x.device)
+        rand[:, 0] = -torch.finfo(rand.dtype).max
+        num_mask = min(int(seq_len * self.mask_prob), seq_len - 1)
+        indices = rand.topk(num_mask, dim = -1).indices
+        mask = ~torch.zeros_like(rand).scatter(1, indices, 1.).bool()
+        
+        x = self.attn_layer(x, self_attn_kv_mask = mask)
         logits = [head(x) for head in self.lm_head]
+        
         
         if targets is None:
             return logits
