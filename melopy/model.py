@@ -72,7 +72,7 @@ class MIDITransformer(nn.Module):
             dim=d_model,
             depth=num_layers,
             heads=num_heads,
-            # attn_num_mem_kv = 8,
+            attn_num_mem_kv = 16,
             use_scalenorm = True,
             ff_glu = True,
             attn_flash = True,
