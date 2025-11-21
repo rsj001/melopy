@@ -48,8 +48,8 @@ def generate(
     prompt = None,
     max_length: int = 1024,
     temperature: float = 1.0,
-    top_k: int = 50,
-    top_p: float = 0.9,
+    top_k: list[int] = [10, 5, 10, 20],
+    top_p: list[float] = [0.6, 0.8, 0.8, 0.6],
     device: str = 'cuda' if torch.cuda.is_available() else 'cpu'
 ):
     """
@@ -86,7 +86,7 @@ def generate(
         # Get model predictions
         # Only use the last max_seq_length tokens as input
         input_seq = generated[:, -model.max_seq_length:]
-        logits_full = model(input_seq, label_smoothing = False)
+        logits_full = model(input_seq)
 
         next_token_full = torch.tensor([], dtype=torch.long, device=device)
 
@@ -95,7 +95,7 @@ def generate(
             next_token_logits = logits[0, -1, :] / temperature
         
             # Apply top-k and top-p filtering
-            filtered_logits = top_k_top_p_filtering(next_token_logits, top_k=top_k, top_p=top_p)
+            filtered_logits = top_k_top_p_filtering(next_token_logits, top_k=top_k[idx], top_p=top_p[idx])
         
             # Sample from the filtered distribution
             probs = F.softmax(filtered_logits, dim=-1)
@@ -123,8 +123,9 @@ def GenerationWorkflow(use_parser: bool = True, user_args: dict = {}, preload_mo
         parser.add_argument('--prompt_length', type=int, default=None, help='Number of tokens to use from prompt (default: all)')
         parser.add_argument('--max_length', type=int, default=512, help='Maximum sequence length to generate')
         parser.add_argument('--temperature', type=float, default=1.0, help='Sampling temperature')
-        parser.add_argument('--top_k', type=int, default=50, help='Top-k sampling parameter')
-        parser.add_argument('--top_p', type=float, default=0.9, help='Nucleus sampling parameter')
+        parser.add_argument('--top_k', nargs=4, type=int, default=[10, 5, 10, 20], help='Top-k sampling parameter for 4 Heads')
+        parser.add_argument('--top_p', nargs=4, type=float, default=[0.6, 0.8, 0.8, 0.6], help='Nucleus sampling parameter for 4 Heads')
+        
         parser.add_argument('--seed', type=int, default=None, help='Random seed')
         # this is what model will hear before regressive generation
         parser.add_argument('--piano_channels', type=str, default='0, 1, 2, 3, 4, 5', help='Comma-separated MIDI channels for prompt (default: 0)')
@@ -140,8 +141,8 @@ def GenerationWorkflow(use_parser: bool = True, user_args: dict = {}, preload_mo
             "prompt_length": None,
             "max_length": 512,
             "temperature": 1.0,
-            "top_k": 50,
-            "top_p": 0.9,
+            "top_k": [10, 5, 10, 20],
+            "top_p": [0.6, 0.8, 0.8, 0.6],
             "seed": None,
             "piano_channels": '0, 1, 2, 3, 4, 5'
         }
