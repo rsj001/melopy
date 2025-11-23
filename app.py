@@ -18,16 +18,18 @@ def infer(prompt_midi,
     seed,
     piano_channels):
     sample_rate = 44100
+    top_k = list(map(int, top_k.split(' ')))
+    top_p = list(map(float, top_p.split(' ')))
     args = {
-        "checkpoint_dir": "checkpoints_debug", # Change this when using
-        "checkpoint_name": "best_model.pt",
+        "checkpoint_dir": "gradio_model", # Change this when using
+        "checkpoint_name": "gradio.pt",
         "output": "results/app/generated.mid",
         "prompt_midi": prompt_midi.name if prompt_midi else None, 
         "prompt_length": prompt_length, 
         "max_length": max_length, 
         "temperature": temperature, 
-        "top_k": top_k, 
-        "top_p": top_p, 
+            "top_k": top_k,
+            "top_p": top_p,
         "seed": seed, 
         "piano_channels": piano_channels
     }
@@ -35,16 +37,16 @@ def infer(prompt_midi,
     model = None
     GenerationWorkflow(False, args, model, prompt)
     midi = pretty_midi.PrettyMIDI(args["output"])
-    audio = midi.fluidsynth(fs=sample_rate)
+    audio = midi.fluidsynth(fs=sample_rate).astype('float32')
     return (sample_rate, audio)
 
 default = {
     "prompt_midi": None, 
     "prompt_length": None, 
     "max_length": 512, 
-    "temperature": 1.0, 
-    "top_k": 50, 
-    "top_p": 0.9, 
+    "temperature": 1.1, 
+    "top_k": [10, 5, 10, 5],
+    "top_p": [0.6, 0.8, 0.8, 0.4],
     "seed": None, 
     "piano_channels": '0, 1, 2, 3, 4, 5' 
 }
@@ -54,8 +56,10 @@ inputs = [
     gr.Number(label="Prompt Length", value=default["prompt_length"]),
     gr.Number(label="Max Length", value=default["max_length"]),
     gr.Slider(0.1, 2.0, value=default["temperature"], step=0.1, label="Temperature"),
-    gr.Number(label="Top K", value=default["top_k"]),
-    gr.Slider(0.01, 1.00, value=default["top_p"], step=0.01, label="Top P"),
+    gr.Textbox(label="topk"),
+    gr.Textbox(label="topp"),
+    # gr.Number(label="Top K", value=(default["top_k"])),
+    # gr.Slider(0.01, 1.00, value=default["top_p"], step=0.01, label="Top P"),
     gr.Number(label="Seed", value=default["seed"]),
     gr.Textbox(label="Piano Channels", value=default["piano_channels"])
 ]
@@ -67,4 +71,4 @@ outputs = [
 demo = gr.Interface(fn=infer, inputs=inputs, outputs=outputs, title="Melopy Demo")
 
 if __name__ == "__main__":
-    demo.launch(share = True)
+    demo.launch()
