@@ -48,8 +48,8 @@ def generate(
     prompt = None,
     max_length: int = 1024,
     temperature: float = 1.0,
-    top_k: list[int] = [10, 5, 10, 20],
-    top_p: list[float] = [0.6, 0.8, 0.8, 0.6],
+    top_k: int = 50,
+    top_p: float = 0.9,
     device: str = 'cuda' if torch.cuda.is_available() else 'cpu'
 ):
     """
@@ -73,44 +73,25 @@ def generate(
     
     # Initialize with BOS token if no prompt
     if prompt is None:
-        generated = torch.tensor([[tokenizer.bos_token]], dtype=torch.long, device=device)
+        generated = torch.tensor([[tokenizer.bos_token_id]], dtype=torch.long, device=device)
     else:
         generated = prompt.to(device)
-        if generated.dim() == 2:
+        if generated.dim() == 1:
             generated = generated.unsqueeze(0)
-        # batch dim = 1
     
-    vocab_size = list(tokenizer.vocab_size.values())
-    tensor_eos_token = torch.tensor(tokenizer.eos_token, device=device)
     for _ in range(max_length):
-        # Get model predictions
-        # Only use the last max_seq_length tokens as input
         input_seq = generated[:, -model.max_seq_length:]
-        logits_full = model(input_seq)
-
-        next_token_full = torch.tensor([], dtype=torch.long, device=device)
-
-        for idx, logits in enumerate(logits_full):
-            # Get logits for the last position
-            next_token_logits = logits[0, -1, :] / temperature
+        logits = model(input_seq)
+        next_token_logits = logits[0, -1, :] / temperature
+        filtered_logits = top_k_top_p_filtering(next_token_logits, top_k=top_k, top_p=top_p)
         
-            # Apply top-k and top-p filtering
-            filtered_logits = top_k_top_p_filtering(next_token_logits, top_k=top_k[idx], top_p=top_p[idx])
-        
-            # Sample from the filtered distribution
-            probs = F.softmax(filtered_logits, dim=-1)
-            next_token = torch.multinomial(probs, num_samples=1)
-            next_token_full = torch.cat([next_token_full, next_token])
-
-        if (tensor_eos_token == next_token_full).sum() > 0: # at least one eos HARDCODE
-            print("\nCUR TOKEN:", next_token_full)
-            print("\nSTD EOS:", tokenizer.eos_token)
-            generated = torch.cat([generated, tensor_eos_token.unsqueeze(0).unsqueeze(0)], dim=1)     
+        probs = F.softmax(filtered_logits, dim=-1)
+        next_token = torch.multinomial(probs, num_samples=1)
+        generated = torch.cat([generated, next_token.unsqueeze(0)], dim=1)
+        if next_token.item() == tokenizer.eos_token_id:
             break
-        generated = torch.cat([generated, next_token_full.unsqueeze(0).unsqueeze(0)], dim=1)        
     
     return generated[0].cpu().tolist()
-
 
 def GenerationWorkflow(use_parser: bool = True, user_args: dict = {}, preload_model: MIDITransformer | None = None, preload_prompt: torch.Tensor | None = None):
     if use_parser:
@@ -123,8 +104,8 @@ def GenerationWorkflow(use_parser: bool = True, user_args: dict = {}, preload_mo
         parser.add_argument('--prompt_length', type=int, default=None, help='Number of tokens to use from prompt (default: all)')
         parser.add_argument('--max_length', type=int, default=512, help='Maximum sequence length to generate')
         parser.add_argument('--temperature', type=float, default=1.0, help='Sampling temperature')
-        parser.add_argument('--top_k', nargs=4, type=int, default=[10, 5, 10, 20], help='Top-k sampling parameter for 4 Heads')
-        parser.add_argument('--top_p', nargs=4, type=float, default=[0.6, 0.8, 0.8, 0.6], help='Nucleus sampling parameter for 4 Heads')
+        parser.add_argument('--top_k', type=int, default=50, help='Top-k sampling parameter for 4 Heads')
+        parser.add_argument('--top_p', type=float, default=0.9, help='Nucleus sampling parameter for 4 Heads')
         
         parser.add_argument('--seed', type=int, default=None, help='Random seed')
         # this is what model will hear before regressive generation
@@ -141,8 +122,8 @@ def GenerationWorkflow(use_parser: bool = True, user_args: dict = {}, preload_mo
             "prompt_length": None,
             "max_length": 512,
             "temperature": 1.0,
-            "top_k": [10, 5, 10, 20],
-            "top_p": [0.6, 0.8, 0.8, 0.6],
+            "top_k": 50,
+            "top_p": 0.9,
             "seed": None,
             "piano_channels": '0, 1, 2, 3, 4, 5'
         }
@@ -218,10 +199,7 @@ def GenerationWorkflow(use_parser: bool = True, user_args: dict = {}, preload_mo
             # Show prompt preview
             print("\nPrompt sequence preview:")
             for i, tid in enumerate(prompt_tokens[:10]):
-                token_name = []
-                for idx, key in enumerate(tokenizer.vocab_size):
-                    token_name.append(tokenizer.id_to_token[key][tid[idx]])
-                
+                token_name = tokenizer.id_to_token[tid]
                 print(f"  {i}: {token_name}")
             if len(prompt_tokens) > 10:
                 print(f"  ... ({len(prompt_tokens) - 10} more tokens)")

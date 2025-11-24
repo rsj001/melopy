@@ -57,7 +57,7 @@ class MIDIDataset(Dataset):
         self.num_workers = num_workers
         self.piano_channels = piano_channels
 
-        self.pad_token = tokenizer.pad_token
+        self.pad_token = tokenizer.pad_token_id
 
         # self.stride > seq_length makes no sense in this case, I suppose
         
@@ -91,14 +91,8 @@ class MIDIDataset(Dataset):
                 else:
                     tqdm.write(message)
 
-        self.sequences = torch.tensor(self.sequences, dtype=torch.uint8)
-        print(f"Created {len(self.sequences)} sequences of length {seq_length}, processing data augmentation twice...")
-
-        # DATA AUGMENTATION BEGIN
-        self.sequences = torch.cat([self.sequences, self.augment_pitch(self.sequences), self.augment_pitch(self.sequences)])
-        # DATA AUGMENTATION END
-        
-        print(f"Created {len(self.sequences)} sequences of length {seq_length} in total.")
+        self.sequences = torch.tensor(self.sequences)
+        print(f"Created {len(self.sequences)} sequences of length {seq_length}")
     
     # ===============================================================
     # Save / Load Methods Begin
@@ -171,42 +165,6 @@ class MIDIDataset(Dataset):
             'input_ids': input_ids,
             'target_ids': target_ids
         }
-    def augment_pitch(self, sequences, pitch_index=0, special_ids={0,1,2}):
-        pitch_min = self.tokenizer.token_to_id["note"][f"NOTE_{self.tokenizer.min_pitch}"]
-        pitch_max = self.tokenizer.token_to_id["note"][f"NOTE_{self.tokenizer.max_pitch}"]
-
-        seq_pitch = sequences[..., pitch_index].to(torch.int16)
-
-        valid_mask = torch.ones_like(seq_pitch, dtype=torch.bool)
-        for sid in special_ids:
-            valid_mask &= (seq_pitch != sid)
-        
-        any_token = valid_mask.any(dim=1)
-        sequences = sequences[any_token]
-        seq_pitch = seq_pitch[any_token]
-        valid_mask = valid_mask[any_token]
-
-        seq_pitch_min = torch.where(valid_mask, seq_pitch, pitch_max).min(dim=1).values
-        seq_pitch_max = torch.where(valid_mask, seq_pitch, pitch_min).max(dim=1).values
-
-        # 每个 sequence 可偏移范围
-        down_range = torch.clamp(seq_pitch_min - pitch_min, min=0, max = 12)
-        up_range   = torch.clamp(pitch_max - seq_pitch_max, min=0, max = 12)
-
-        # 随机 float ∈ [0,1)，再映射到对应整数偏移范围
-        rand_float = torch.rand(sequences.size(0), device=sequences.device)
-        offsets = (rand_float * (up_range + down_range + 1).to(torch.float32) - down_range.to(torch.float32)).floor().to(torch.int16)
-
-        keep = offsets != 0
-        offsets = offsets[keep][:, None]
-        valid_mask = valid_mask[keep]
-        sequences = sequences[keep]
-        seq_pitch = sequences[..., pitch_index].to(torch.int16)
-        sequences[..., pitch_index] = torch.where(valid_mask, seq_pitch + offsets, seq_pitch).to(torch.uint8)
-
-        # print(sequences)
-
-        return sequences
 
 def get_midi_files(directory: str, recursive: bool = True) -> List[str]:
     """

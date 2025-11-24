@@ -18,7 +18,7 @@ import datetime
 
 from tokenizer import MIDITokenizer
 from dataset import MIDIDataset, get_midi_files
-from model import MIDITransformer, UncertaintyLossWrapper
+from model import MIDITransformer
 from visualizer import TrainVisualizer
 
 class Trainer:
@@ -28,7 +28,6 @@ class Trainer:
         self,
         model: MIDITransformer,
         train_loader: DataLoader,
-        vocab_size: List[int],
         num_epochs: int,
         val_loader: Optional[DataLoader] = None,
         learning_rate: float = 3e-4,
@@ -45,12 +44,7 @@ class Trainer:
         self.device = device
         self.checkpoint_dir = checkpoint_dir
         self.vis = vis
-        self.vocab_size = vocab_size
-        self.num_tasks = len(vocab_size)
         self.num_epochs = num_epochs
-        # HARDCODED
-        self.loss_weights = torch.tensor([1.5, 0.6, 0.4, 1.0] ,device=device)
-        # self.uncertainty = UncertaintyLossWrapper(self.num_tasks, device)
         
         os.makedirs(checkpoint_dir, exist_ok=True)
         
@@ -60,14 +54,7 @@ class Trainer:
             'lr': learning_rate,
             'weight_decay': weight_decay,
             'betas':(0.9, 0.98),
-        },
-        # {
-        #     'params': self.uncertainty.parameters(),
-        #     'lr': learning_rate,
-        #     'weight_decay': 0.0,
-        #     'betas':(0.9, 0.95),
-        # }
-        ])
+        }])
         
         # Learning rate scheduler, based on num_epochs, init on first time run
         num_training_steps = len(train_loader) * num_epochs
@@ -98,10 +85,7 @@ class Trainer:
             
             # Forward pass
             output = self.model(input_ids, target_ids)
-            logits, losses = output
-            
-            loss = self.loss_weights @ losses
-            # loss = self.uncertainty(losses)
+            logits, loss = output
             
             # Backward pass
             self.optimizer.zero_grad()
@@ -113,7 +97,6 @@ class Trainer:
             
             self.optimizer.step()
             self.scheduler.step()
-
             
             with torch.no_grad():
                 # Update metrics
@@ -129,31 +112,15 @@ class Trainer:
                 # --- TensorBoard metrics ---
                 if self.vis is not None:
                     if self.global_step % self.vis.log_interval == 0:
-                        accuracies = []
-                        for idx, _logits in enumerate(logits):
-                            target_for_type = target_ids[..., idx]
-                            pred_ids = torch.argmax(_logits, dim=-1)
-                            correct = (pred_ids == target_for_type)[target_for_type != 0].float() # NOTE THIS IS HARDCODED 
-                            accuracies.append(correct.mean().item())
+                        pred_ids = torch.argmax(logits, dim=-1)
+                        correct = (pred_ids == target_ids)[target_ids != 0].float() # NOTE THIS IS HARDCODED 
+                        accuracy = correct.mean().item()
 
-                        
                         self.vis.log_loss(loss.item(), self.global_step)
                         self.vis.log_lr(self.optimizer, self.global_step)
-
-                        # self.vis.log_grad_norm(self.uncertainty, self.global_step, name = 'uncertainty_grad_norm')
                         self.vis.log_grad_norm(self.model, self.global_step)
-
                         self.vis.log_loss(total_loss / (batch_idx + 1), self.global_step, prefix="train", name="avg_loss")
-
-                        # NOTE THIS IS HARDCODED
-                        self.vis.log_loss(accuracies[0], self.global_step, prefix="train_acc_token", name="pitch")
-                        self.vis.log_loss(accuracies[1], self.global_step, prefix="train_acc_token", name="duration")
-                        self.vis.log_loss(accuracies[2], self.global_step, prefix="train_acc_token", name="velocity")
-                        self.vis.log_loss(accuracies[3], self.global_step, prefix="train_acc_token", name="time_shift")
-                        self.vis.log_loss(losses[0], self.global_step, prefix="train_loss_token", name="pitch")
-                        self.vis.log_loss(losses[1], self.global_step, prefix="train_loss_token", name="duration")
-                        self.vis.log_loss(losses[2], self.global_step, prefix="train_loss_token", name="velocity")
-                        self.vis.log_loss(losses[3], self.global_step, prefix="train_loss_token", name="time_shift")
+                        self.vis.log_loss(accuracy, self.global_step, prefix="train", name="accuracy")
 
         
         avg_loss = total_loss / len(self.train_loader)
@@ -174,8 +141,8 @@ class Trainer:
                 target_ids = batch['target_ids'].to(self.device)
                 
                 output = self.model(input_ids, target_ids)
-                logits, losses = output
-                total_loss += self.loss_weights @ losses
+                logits, loss = output
+                total_loss += loss
                 # total_loss += self.uncertainty(losses)
         
         avg_loss = total_loss / len(self.val_loader)
@@ -203,7 +170,6 @@ class Trainer:
             json.dump(model_config, f, indent=4)
             
         checkpoint = {
-            # 'uncertainty_state_dict': self.uncertainty.state_dict(),
             'epoch': self.epoch,
             'global_step': self.global_step,
             'model_state_dict': self.model.state_dict(),
@@ -219,7 +185,6 @@ class Trainer:
     
     def load_checkpoint(self, filename):
         """Load model checkpoint."""
-        
         
         path = os.path.join(self.checkpoint_dir, filename)
         config_path = os.path.join(self.checkpoint_dir, "model_config.json")
@@ -240,7 +205,6 @@ class Trainer:
         
         checkpoint = torch.load(path, map_location=self.device)
         self.model.load_state_dict(checkpoint['model_state_dict'])
-        # self.uncertainty.load_state_dict(checkpoint['uncertainty_state_dict'])
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
         self.epoch = checkpoint['epoch']
@@ -388,16 +352,15 @@ def main():
     # 我并不需要怎么重建这个 tokenizer
 
     print(f"Vocabulary size: {tokenizer.vocab_size}")
-    print(f"Total Size: {tokenizer.vocab_size_full}")
+
     # Save tokenizer config
     os.makedirs(args.checkpoint_dir, exist_ok=True)
     tokenizer_config = {
         'min_pitch': tokenizer.min_pitch,
         'max_pitch': tokenizer.max_pitch,
-        'velocity_bins': tokenizer.velocity_bins,
-        'duration_bins': tokenizer.duration_bins,
-        'time_shift_bins': tokenizer.time_shift_bins,
-        'version': tokenizer.version
+        'num_velocity_bins': tokenizer.num_velocity_bins,
+        'max_time_shift': tokenizer.max_time_shift,
+        'time_shift_resolution': tokenizer.time_shift_resolution,
     }
     with open(os.path.join(args.checkpoint_dir, 'tokenizer_config.json'), 'w') as f:
         json.dump(tokenizer_config, f, indent=2)
@@ -509,7 +472,7 @@ def main():
     # Initialize model
     print("Initializing model...")
     model = MIDITransformer(
-        vocab_size=list(tokenizer.vocab_size.values()),
+        vocab_size=tokenizer.vocab_size,
         d_model=args.d_model,
         num_layers=args.num_layers,
         num_heads=args.num_heads,
@@ -528,8 +491,8 @@ def main():
         "prompt_length": None,
         "max_length": 256,
         "temperature": 1.2,
-        "top_k": [12, 12, 8, 20],
-        "top_p": [0.9, 0.9, 0.9, 0.9],
+        "top_k": 50,
+        "top_p": 0.9,
         "seed": None,
         "piano_channels": '0, 1, 2, 3, 4, 5'
     } # 这是给Visualizer的Generation准备的
@@ -539,7 +502,6 @@ def main():
         model=model,
         num_epochs=args.num_epochs, # 还用于重建 lambda scheduler
         save_every=args.save_every,
-        vocab_size=list(tokenizer.vocab_size.values()),
         train_loader=train_loader,
         val_loader=val_loader,
         learning_rate=args.lr, # learning_rate 会被 resume 覆盖
