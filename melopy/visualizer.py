@@ -117,7 +117,7 @@ class TrainVisualizer:
         if pianoroll.max() > 0:
             pianoroll /= pianoroll.max()
 
-        fig, ax = plt.subplots(figsize=(30, 4), dpi=100)
+        fig, ax = plt.subplots(figsize=(15, 4), dpi=100)
         ax.imshow(pianoroll, aspect="auto", origin="lower", cmap="gray_r")
 
         ax.set_ylim(10, 110) # 省略掉一般不会出现的区域
