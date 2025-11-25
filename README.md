@@ -1,5 +1,7 @@
 # Melopy - MIDI Generation with Transformer
 
+> **Note:** This project is a homework implementation. It is primarily for learning purposes and is absolutely **not a production-ready or capable MIDI generation model**.
+
 A Decoder-only GPT model for autoregressive generation of piano MIDI sequences.
 
 ## Features
