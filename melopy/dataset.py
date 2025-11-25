@@ -4,6 +4,28 @@ from torch.utils.data import Dataset
 from typing import List, Optional, Dict, Any
 from tokenizer import MIDITokenizer
 from tqdm.auto import tqdm
+import multiprocessing as mp
+
+# This is a static method.
+def worker(args):
+    midi_file, tokenizer, stride, seq_length, piano_channels, pad_token = args
+    return_val = []
+    try:
+        tokens = tokenizer.encode_midi(midi_file, piano_channels=piano_channels)
+        for i in range(0, len(tokens), stride):
+            chunk = tokens[i:i + seq_length + 1]  # +1 for target
+            
+            if len(chunk) == seq_length + 1:
+                return_val.append(chunk)
+            # elif len(chunk) > seq_length // 2:
+            #     padding_needed = (seq_length + 1) - len(chunk)
+            #     padded_chunk = chunk + [pad_token] * padding_needed
+            #     # print(f"{padded_chunk}")
+            #     return_val.append(padded_chunk)
+                
+    except Exception as e:
+        return [], f"Error processing {midi_file}: {e}"
+    return return_val, None
 
 
 class MIDIDataset(Dataset):
@@ -19,7 +41,7 @@ class MIDIDataset(Dataset):
         seq_length: int = 512,
         stride: Optional[int] = None,
         piano_channels: Optional[List[int]] = None,
-        pitch_augmentation: List[int] = [0],
+        num_workers: int = 16,
     ):
         """
         Args:
@@ -32,11 +54,17 @@ class MIDIDataset(Dataset):
         self.tokenizer = tokenizer
         self.seq_length = seq_length
         self.stride = stride if stride is not None else seq_length
+        self.num_workers = num_workers
+        self.piano_channels = piano_channels
+
+        self.pad_token = tokenizer.pad_token_id
+
         # self.stride > seq_length makes no sense in this case, I suppose
         
         # Default to channel 0 (piano) for piano-only dataset
         # clarify tracks / channels here:
         # A "piano channel" in MIDI is not a specific technical term, but rather a user-defined designation, usually MIDI channel 1.
+
         if piano_channels is None:
             piano_channels = [0, 1, 2, 3, 4, 5]
         
@@ -44,22 +72,26 @@ class MIDIDataset(Dataset):
         self.sequences = []
         print(f"Processing {len(midi_files)} MIDI files (channels: {piano_channels})...")
         
-        pbar = tqdm(midi_files, desc=f'Preprocessing')
-        for midi_file_idx, midi_file in enumerate(pbar):
-            try:
-                for pitch in pitch_augmentation:
-                    tokens = tokenizer.encode_midi(midi_file, piano_channels=piano_channels, pitch_augmentation=pitch)
-                    # Chunk the sequence
-                    for i in range(0, len(tokens) - seq_length, self.stride):
-                        chunk = tokens[i:i + seq_length + 1]  # +1 for target
-                        if len(chunk) == seq_length + 1:
-                            self.sequences.append(chunk)
-            # TODO : efficiency evaluation
-            except Exception as e:
-                tqdm.write(f"Error processing {midi_file}: {e}")
-                continue
-        self.sequences = torch.tensor(self.sequences, dtype=torch.uint8)
-        
+        tasks = [
+            (file, tokenizer, self.stride, seq_length, piano_channels, self.pad_token) 
+            for file in midi_files
+        ]
+
+        print(f"Use {num_workers} workers.")
+
+        with mp.Pool(self.num_workers) as pool:
+            for return_val, message in tqdm(
+                pool.imap_unordered(worker, tasks),
+                total=len(midi_files),
+                desc="Preprocessing",
+                dynamic_ncols = True
+            ):
+                if message is None:
+                    self.sequences.extend(return_val)
+                else:
+                    tqdm.write(message)
+
+        self.sequences = torch.tensor(self.sequences)
         print(f"Created {len(self.sequences)} sequences of length {seq_length}")
     
     # ===============================================================
@@ -133,7 +165,6 @@ class MIDIDataset(Dataset):
             'input_ids': input_ids,
             'target_ids': target_ids
         }
-
 
 def get_midi_files(directory: str, recursive: bool = True) -> List[str]:
     """

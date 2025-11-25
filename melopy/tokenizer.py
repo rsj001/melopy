@@ -15,7 +15,7 @@ class MIDITokenizer:
     def __init__(
         self,
         min_pitch: int = 36,  # C2
-        max_pitch: int = 84,  # C7
+        max_pitch: int = 96,  # C8
         num_velocity_bins: int = 32,
         max_time_shift: int = 100,
         time_shift_resolution: int = 10,  # milliseconds per time shift unit
@@ -206,8 +206,8 @@ class MIDITokenizer:
                 time_units = time_diff_ms // self.time_shift_resolution
                 
                 # shorten too long time_units
-                if time_units > self.max_time_shift * 5:
-                    time_units = self.max_time_shift * 5
+                if time_units > self.max_time_shift * 4:
+                    time_units = self.max_time_shift * 4
                 
                 while time_units > 0:
                     shift = min(time_units, self.max_time_shift)

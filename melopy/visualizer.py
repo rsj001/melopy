@@ -1,6 +1,6 @@
 import io
 import os
-import subprocess
+from datetime import datetime
 
 import torch
 import pretty_midi
@@ -10,9 +10,12 @@ import matplotlib.pyplot as plt
 from torch.utils.tensorboard import SummaryWriter
 import numpy as np
 
+from model import MIDITransformer
+from generate import GenerationWorkflow
+
 class TrainVisualizer:
-    def __init__(self, log_dir="checkpoints/tensorboard", sample_rate=16000, fps=100,
-                 max_audio_seconds=20, ema_decay=0.98, log_interval = 500):
+    def __init__(self, log_dir="checkpoints/tensorboard", sample_rate=44100, fps=100,
+                 max_audio_seconds=20, ema_decay=0.98, log_interval = 500, generation_args = {}, preload_model: MIDITransformer | None = None):
         """
         ema_decay 用于平滑曲线，例如 avg_loss。
         """
@@ -25,7 +28,12 @@ class TrainVisualizer:
         self.ema_decay = ema_decay
         self.log_interval = log_interval
         self._ema_cache = {}  # key -> ema value
-        
+
+        self.preload_model = preload_model
+        self.generation_args = generation_args
+
+        if "output_dir" not in self.generation_args:
+            self.generation_args["output_dir"] = "results/auto"
 
     # ---------------------------------------------------------
     # Metric Logging
@@ -58,7 +66,7 @@ class TrainVisualizer:
 
         self.writer.add_scalar(f"{prefix}/{name}_ema", new, step)
 
-    def log_grad_norm(self, model, step, prefix="train"):
+    def log_grad_norm(self, model, step, prefix="train", name = "grad_norm"):
         """
         自动统计梯度 L2 范数，并记录 mean/max 两个指标。
         """
@@ -78,16 +86,19 @@ class TrainVisualizer:
         mean_norm = np.mean(norms)
         max_norm = np.max(norms)
 
-        self.writer.add_scalar(f"{prefix}/grad_norm/total", total_norm, step)
-        self.writer.add_scalar(f"{prefix}/grad_norm/mean", mean_norm, step)
-        self.writer.add_scalar(f"{prefix}/grad_norm/max", max_norm, step)
+        self.writer.add_scalar(f"{prefix}/{name}/total", total_norm, step)
+        self.writer.add_scalar(f"{prefix}/{name}/mean", mean_norm, step)
+        self.writer.add_scalar(f"{prefix}/{name}/max", max_norm, step)
 
     # ---------------------------------------------------------
     # MIDI Visuals
     # ---------------------------------------------------------
-    def generate_and_log_midi(self, step: int, tag="generated"): # 一个临时方案，临时方案！！！！
-        subprocess.run(["sh", "scripts/generate_with_prompt.sh"], check=True)
-        self.log_midi("results/demo.mid", step, tag)
+    def generate_and_log_midi(self, step: int, tag="generated"): # 稍稍改进，不过还是临时方案
+        timestamp = datetime.now().strftime("%y%m%d_%H%M%S")
+        self.generation_args["output"] = os.path.join(self.generation_args["output_dir"], f"step_{step}_{timestamp}.mid")
+        # force to override
+        GenerationWorkflow(False, self.generation_args, self.preload_model, None)
+        self.log_midi(self.generation_args["output"], step, tag)
 
     def log_midi(self, midi_dir: str, step: int, tag="generated"):
         midi = pretty_midi.PrettyMIDI(midi_dir)
@@ -106,10 +117,10 @@ class TrainVisualizer:
         if pianoroll.max() > 0:
             pianoroll /= pianoroll.max()
 
-        fig, ax = plt.subplots(figsize=(10, 4), dpi=100)
+        fig, ax = plt.subplots(figsize=(15, 4), dpi=100)
         ax.imshow(pianoroll, aspect="auto", origin="lower", cmap="gray_r")
 
-        ax.set_ylim(35, 85) # 省略掉一般不会出现的区域
+        ax.set_ylim(10, 110) # 省略掉一般不会出现的区域
         ax.set_title(f"Pianoroll: {tag}")
         ax.set_xlabel("Time (frames)")
         ax.set_ylabel("Pitch")

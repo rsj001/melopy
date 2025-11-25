@@ -2,60 +2,69 @@
 Training script for MIDI GPT model.
 """
 
+
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, Subset, ConcatDataset
 import os
 import json
-from tqdm import tqdm
+from tqdm.auto import tqdm
 import argparse
+import math
 
-from typing import Optional
+from typing import Optional, List
 import random
+import datetime
 
 from tokenizer import MIDITokenizer
 from dataset import MIDIDataset, get_midi_files
 from model import MIDITransformer
 from visualizer import TrainVisualizer
 
-
 class Trainer:
     """Trainer class for MIDI GPT model."""
     
     def __init__(
         self,
-        model: nn.Module,
+        model: MIDITransformer,
         train_loader: DataLoader,
+        num_epochs: int,
         val_loader: Optional[DataLoader] = None,
         learning_rate: float = 3e-4,
         weight_decay: float = 0.01,
         device: str = 'cuda' if torch.cuda.is_available() else 'cpu',
         checkpoint_dir: str = 'checkpoints',
         vis: Optional[TrainVisualizer] = None,
+        save_every: int = 5
     ):
+        self.save_every = save_every
         self.model = model.to(device)
         self.train_loader = train_loader
         self.val_loader = val_loader
         self.device = device
         self.checkpoint_dir = checkpoint_dir
         self.vis = vis
-
+        self.num_epochs = num_epochs
         
         os.makedirs(checkpoint_dir, exist_ok=True)
         
         # Optimizer
-        self.optimizer = torch.optim.AdamW(
-            model.parameters(),
-            lr=learning_rate,
-            weight_decay=weight_decay,
-            betas=(0.9, 0.95)
-        )
+        self.optimizer = torch.optim.AdamW([{
+            'params': model.parameters(),
+            'lr': learning_rate,
+            'weight_decay': weight_decay,
+            'betas':(0.9, 0.98),
+        }])
         
-        # Learning rate scheduler
-        self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-            self.optimizer,
-            T_max=len(train_loader) * 100  # Assuming 100 epochs max
-        )
+        # Learning rate scheduler, based on num_epochs, init on first time run
+        num_training_steps = len(train_loader) * num_epochs
+        num_warmup_steps = int(0.1 * num_training_steps)
+        def lr_lambda(current_step):
+            if current_step < num_warmup_steps:
+                return float(current_step) / float(max(1, num_warmup_steps))
+            progress = float(current_step - num_warmup_steps) / float(max(1, num_training_steps - num_warmup_steps))
+            return 0.5 * (1.0 + math.cos(math.pi * progress))
+        self.scheduler = torch.optim.lr_scheduler.LambdaLR(self.optimizer, lr_lambda)
         
         # Training state
         self.epoch = 0
@@ -84,15 +93,12 @@ class Trainer:
             
             # Gradient clipping
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+            # torch.nn.utils.clip_grad_norm_(self.uncertainty.parameters(), max_norm=0.1)
             
             self.optimizer.step()
             self.scheduler.step()
             
             with torch.no_grad():
-                pred_ids = torch.argmax(logits, dim=-1)
-                correct = (pred_ids == target_ids).float()
-                accuracy = correct.mean().item()
-
                 # Update metrics
                 total_loss += loss.item()
                 self.global_step += 1
@@ -100,13 +106,16 @@ class Trainer:
                 # Update progress bar
                 pbar.set_postfix({
                     'loss': f'{loss.item():.4f}',
-                    'acc': f'{accuracy:.4f}',
                     'lr': f'{self.scheduler.get_last_lr()[0]:.6f}'
                 })
 
                 # --- TensorBoard metrics ---
                 if self.vis is not None:
                     if self.global_step % self.vis.log_interval == 0:
+                        pred_ids = torch.argmax(logits, dim=-1)
+                        correct = (pred_ids == target_ids)[target_ids != 0].float() # NOTE THIS IS HARDCODED 
+                        accuracy = correct.mean().item()
+
                         self.vis.log_loss(loss.item(), self.global_step)
                         self.vis.log_lr(self.optimizer, self.global_step)
                         self.vis.log_grad_norm(self.model, self.global_step)
@@ -133,7 +142,8 @@ class Trainer:
                 
                 output = self.model(input_ids, target_ids)
                 logits, loss = output
-                total_loss += loss.item()
+                total_loss += loss
+                # total_loss += self.uncertainty(losses)
         
         avg_loss = total_loss / len(self.val_loader)
 
@@ -145,6 +155,20 @@ class Trainer:
     
     def save_checkpoint(self, filename):
         """Save model checkpoint."""
+
+        def build_config_from_attrs(obj, attr_names):
+            config = {}
+            for name in attr_names:
+                if not hasattr(obj, name):
+                    raise AttributeError(f"Object has no attribute '{name}'")
+                config[name] = getattr(obj, name)
+            return config
+        
+        # HARDCODE
+        model_config = build_config_from_attrs(self.model, ["vocab_size", "d_model", "num_layers", "num_heads", "max_seq_length", "dropout", "pad_token_id"])
+        with open(os.path.join(self.checkpoint_dir, "model_config.json"), "w") as f:
+            json.dump(model_config, f, indent=4)
+            
         checkpoint = {
             'epoch': self.epoch,
             'global_step': self.global_step,
@@ -161,10 +185,23 @@ class Trainer:
     
     def load_checkpoint(self, filename):
         """Load model checkpoint."""
+        
         path = os.path.join(self.checkpoint_dir, filename)
+        config_path = os.path.join(self.checkpoint_dir, "model_config.json")
         if not os.path.exists(path):
             print(f"Checkpoint {path} not found")
             return False
+        
+        # migration, checkpoint found but no json, use 
+        if not os.path.exists(config_path):
+            print(f"Checkpoint config {config_path} not found. Use parameters from console.")
+        else:
+            model_config = json.load(open(config_path))
+            # 重新实例化 model
+            # TODO config SAFE?
+            self.model = MIDITransformer(**model_config).to(self.device)
+            if self.vis is not None:
+                self.vis.preload_model = self.model
         
         checkpoint = torch.load(path, map_location=self.device)
         self.model.load_state_dict(checkpoint['model_state_dict'])
@@ -176,10 +213,10 @@ class Trainer:
         self.val_losses = checkpoint['val_losses']
         self.best_val_loss = checkpoint['best_val_loss']
         
-        print(f"Loaded checkpoint from epoch {self.epoch}")
+        print(f"Loaded checkpoint from epoch {self.epoch}, step {self.global_step}")
         return True
     
-    def train(self, num_epochs: int, save_every: int = 5):
+    def train(self):
         """
         Train the model for multiple epochs.
         
@@ -190,9 +227,11 @@ class Trainer:
         print(f"Training on {self.device}")
         print(f"Model has {self.model.get_num_params():,} parameters")
         
+        num_epochs = self.num_epochs
+        
         start_epoch = self.epoch # 1-indexed, 真受不了 0
 
-        for epoch in range(start_epoch + 1, start_epoch + num_epochs + 1):
+        for epoch in range(start_epoch + 1, num_epochs + 1): # 总数，而非叠加
             self.epoch = epoch
             
             # Train
@@ -203,16 +242,18 @@ class Trainer:
             if self.val_loader is not None:
                 val_loss = self.validate()
                 if val_loss is not None:
-                    print(f"Epoch {epoch}: Val Loss = {val_loss:.4f}")
+                    print(f"Epoch {epoch}: Val Loss = {val_loss:.4f}", end="")
                     
                     # Save best model
                     if val_loss < self.best_val_loss:
                         self.best_val_loss = val_loss
                         self.save_checkpoint("best_model.pt") # save with special name!
-                        print(f"New best validation loss: {val_loss:.4f}")
+                        print(f" New best!")
+                    else:
+                        print("")
             
             # Save checkpoint periodically
-            if epoch % save_every == 0:
+            if epoch % self.save_every == 0:
                 self.save_checkpoint(f'checkpoint_epoch_{epoch}.pt')
             self.save_checkpoint(f'checkpoint_quicksave.pt')
 
@@ -242,28 +283,26 @@ def main():
         help='Path(s) to preprocessed .pth dataset files with weights(e.g., data/train.pth:1.0)'
     )
 
-    parser.add_argument(
-        '--pitch_augmentation',
-        type=int,
-        default=[0],
-        nargs='+',
-        help='Data augmentation by pitch shifting. Provide a list of integers (e.g., -2 0 2)'
-    )
-
     parser.add_argument('--val_data_dir', type=str, default='data/val', help='Directory containing MIDI files (val)')
     parser.add_argument('--checkpoint_dir', type=str, default='checkpoints', help='Directory for checkpoints')
 
     args, _ = parser.parse_known_args()
     default_log_dir = os.path.join(args.checkpoint_dir, "logs")
     parser.add_argument('--log_dir', type=str, default=default_log_dir, help='Directory for logs')
+    parser.add_argument('--result_dir', type=str, default="results/auto", help='Directory for generated files')
 
     parser.add_argument('--seq_length', type=int, default=512, help='Sequence length')
     parser.add_argument('--batch_size', type=int, default=32, help='Batch size')
     parser.add_argument('--num_epochs', type=int, default=50, help='Number of epochs')
+    # 到底要不要持久化呢
+    # 还是算了吧，
+    
     parser.add_argument('--lr', type=float, default=3e-4, help='Learning rate')
     parser.add_argument('--d_model', type=int, default=512, help='Model dimension')
     parser.add_argument('--num_layers', type=int, default=6, help='Number of transformer layers')
     parser.add_argument('--num_heads', type=int, default=8, help='Number of attention heads')
+    parser.add_argument('--dropout', type=float, default=0.12, help='Dropout')
+    
     parser.add_argument('--save_every', type=int, default=5, help='Checkpoints saving frequency')
     parser.add_argument('--chunk_stride', type=int, default=256, help='Stride for sequence chunking')
     parser.add_argument('--log_interval', type=int, default=500, help='Log frenqeuency (in steps)')
@@ -294,12 +333,12 @@ def main():
         default=None, # 如果不写 --resume，就是 None，啊啊啊烦死了
         help='Resume from checkpoint'
     )
-    
+
     parser.add_argument('--piano_channels', type=str, default='0,1,2,3,4,5', help='Comma-separated list of MIDI channels for piano (default: 0)')
+    parser.add_argument('--cpu_num_workers', type=int, default=16, help='The number of CPU workers for pre-processing data')
 
     # only chunk_stride data_dir_with_weights seq_length piano_channels matters in preprocessing
     # TODO: 把训练逻辑和预处理分开
-
     args = parser.parse_args()
     
     # Parse piano channels
@@ -307,16 +346,13 @@ def main():
     
     # Initialize tokenizer
     print("Initializing tokenizer...")
-    tokenizer = MIDITokenizer(
-        min_pitch=36,  # C2
-        max_pitch=84,  # C7
-        num_velocity_bins=32,
-        max_time_shift=100,
-        time_shift_resolution=10
-    )
+    tokenizer = MIDITokenizer()
     
+    # go default, check tokenizer.py for params
+    # 我并不需要怎么重建这个 tokenizer
+
     print(f"Vocabulary size: {tokenizer.vocab_size}")
-    
+
     # Save tokenizer config
     os.makedirs(args.checkpoint_dir, exist_ok=True)
     tokenizer_config = {
@@ -325,12 +361,10 @@ def main():
         'num_velocity_bins': tokenizer.num_velocity_bins,
         'max_time_shift': tokenizer.max_time_shift,
         'time_shift_resolution': tokenizer.time_shift_resolution,
-        'vocab_size': tokenizer.vocab_size
     }
     with open(os.path.join(args.checkpoint_dir, 'tokenizer_config.json'), 'w') as f:
         json.dump(tokenizer_config, f, indent=2)
     
-
     if args.load_pth_with_weights is not None:
         if args.preprocess_dataset_as is not None:
             parser.error("--load_pth_with_weights conflicted with --preprocess_dataset_as")
@@ -370,7 +404,7 @@ def main():
             midi_files += cur_midi_files
         if args.debug:
             if len(midi_files) > args.debug:
-                print(f"Training dataset trimmed from {len(midi_files)} to {args.debug}")
+                print(f"Debug Option: Training set trimmed from {len(midi_files)} to {args.debug} files.")
                 debug_list = random.sample(midi_files, args.debug)
                 midi_files = debug_list
         if len(midi_files) == 0:
@@ -386,7 +420,7 @@ def main():
             seq_length=args.seq_length,
             piano_channels=piano_channels,
             stride=args.chunk_stride,
-            pitch_augmentation=args.pitch_augmentation
+            num_workers=args.cpu_num_workers
         )
         if len(dataset) == 0:
             print("No sequences created from MIDI files. Check your data.")
@@ -411,7 +445,8 @@ def main():
         tokenizer=tokenizer,
         seq_length=args.seq_length,
         piano_channels=piano_channels,
-        stride=args.chunk_stride
+        stride=args.chunk_stride,
+        num_workers=args.cpu_num_workers
     )
     if len(val_dataset) == 0:
         print("No sequences created from MIDI files. Check your data. (val)")
@@ -422,7 +457,7 @@ def main():
         dataset,
         batch_size=args.batch_size,
         shuffle=True,
-        num_workers=2,       # Use small >0 to speed up 然并卵
+        num_workers=4,       # Use small >0 to speed up 然并卵
         pin_memory=True,     # Help copy data to GPU faster 然并卵
         persistent_workers=True  # Keeps workers alive between epochs 然并卵
     )
@@ -441,29 +476,42 @@ def main():
         d_model=args.d_model,
         num_layers=args.num_layers,
         num_heads=args.num_heads,
-        d_ff=args.d_model * 4,
         max_seq_length=args.seq_length,
-        dropout=0.1,
-        pad_token_id=tokenizer.pad_token_id
+        dropout=args.dropout,
+        pad_token_id=0
+        # 严格意义上这不是 token
     )
+
+    os.makedirs(args.result_dir, exist_ok=True)
+    generation_args = {
+        # Checkpoint options are useless here
+        "output_dir": args.result_dir, # this is processed in visualizer, not generator
+        "output": "This will be forced to change in visualizer.mid",
+        "prompt_midi": None,
+        "prompt_length": None,
+        "max_length": 256,
+        "temperature": 1.2,
+        "top_k": 50,
+        "top_p": 0.9,
+        "seed": None,
+        "piano_channels": '0, 1, 2, 3, 4, 5'
+    } # 这是给Visualizer的Generation准备的
     
     # Initialize trainer
     trainer = Trainer(
         model=model,
+        num_epochs=args.num_epochs, # 还用于重建 lambda scheduler
+        save_every=args.save_every,
         train_loader=train_loader,
         val_loader=val_loader,
         learning_rate=args.lr, # learning_rate 会被 resume 覆盖
         checkpoint_dir=args.checkpoint_dir,
-        vis=TrainVisualizer(log_dir = args.log_dir, log_interval=args.log_interval)
+        vis=TrainVisualizer(log_dir = args.log_dir, log_interval=args.log_interval, generation_args=generation_args, preload_model=model)
     )
     
-    # Resume from checkpoint if requested
     if args.resume:
         trainer.load_checkpoint(args.resume)
-    
-    # Train
-    trainer.train(num_epochs=args.num_epochs, save_every=args.save_every)
-    
+    trainer.train()
     if trainer.vis is not None:
         trainer.vis.close()
 
