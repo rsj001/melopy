@@ -7,13 +7,13 @@ from typing import List
 
 # 一个带正则化系数 ln x 的线性组合
 # 仍然存在模型刻意降低 loss 大的参数的风险
-class UncertaintyLossWrapper(nn.Module):
-    def __init__(self, num_tasks, device):
-        super().__init__()
-        self.log_vars = nn.Parameter(torch.zeros(num_tasks, device=device))
+# class UncertaintyLossWrapper(nn.Module):
+#     def __init__(self, num_tasks, device):
+#         super().__init__()
+#         self.log_vars = nn.Parameter(torch.zeros(num_tasks, device=device))
         
-    def forward(self, losses):
-        return sum(torch.exp(-self.log_vars) * losses + self.log_vars)
+#     def forward(self, losses):
+#         return sum(torch.exp(-self.log_vars) * losses + self.log_vars)
 
 class FusionLinearPooling(nn.Module):
     def __init__(self, vector_dim, num_vec):
@@ -35,8 +35,7 @@ class MIDITransformer(nn.Module):
     
     def __init__(
         self,
-        vocab_size: List[int],
-        # 为了更好地coding，这里vocab_size改为list类型，表示不同类别的token数量
+        vocab_sizes: List[int],
         d_model: int = 512,
         num_layers: int = 6,
         num_heads: int = 8,
@@ -47,7 +46,7 @@ class MIDITransformer(nn.Module):
     ):
         super().__init__()
         
-        self.vocab_size = vocab_size
+        self.vocab_sizes = vocab_sizes
         self.d_model = d_model
         self.max_seq_length = max_seq_length
         self.pad_token_id = pad_token_id
@@ -55,12 +54,11 @@ class MIDITransformer(nn.Module):
         self.num_heads = num_heads
         self.dropout = dropout
         
-        self.vocab_size_full = sum(self.vocab_size)
-        self.num_token_type = len(self.vocab_size)
+        self.num_token_type = len(self.vocab_sizes)
         
         # Token embedding
         self.embeds = nn.ModuleList([
-            nn.Embedding(siz, d_model) for siz in self.vocab_size
+            nn.Embedding(siz, d_model) for siz in self.vocab_sizes
         ])
         
         self.linear_pooling = FusionLinearPooling(d_model, self.num_token_type)
@@ -85,15 +83,8 @@ class MIDITransformer(nn.Module):
         
         self.lm_head = nn.ModuleList([
             nn.Linear(d_model, size, bias=False)
-            for size in self.vocab_size
+            for size in self.vocab_sizes
         ])
-        
-        # self.autoregressive = AutoregressiveWrapper(
-        #     self.backbone,
-        #     mask_prob = 0.15,  # in paper, they use 15%, same as BERT
-        #     pad_value = pad_token_id,
-        #     ignore_index = pad_token_id
-        # ).cuda()
     
     def forward(self, input_ids: torch.Tensor, targets: torch.Tensor | None = None):
         """
@@ -125,12 +116,11 @@ class MIDITransformer(nn.Module):
         x = self.attn_layer(x, self_attn_kv_mask = mask)
         logits = [head(x) for head in self.lm_head]
         
-        
         if targets is None:
             return logits
         
         targets_T = targets.view(-1, token_dim)
-        losses = [F.cross_entropy(lg.view(-1, self.vocab_size[i]), targets_T[:, i], ignore_index=self.pad_token_id) for i, lg in enumerate(logits)]
+        losses = [F.cross_entropy(lg.view(-1, self.vocab_sizes[i]), targets_T[:, i], ignore_index=self.pad_token_id) for i, lg in enumerate(logits)]
         return (logits, torch.stack(losses))
         
     def get_num_params(self):

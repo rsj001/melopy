@@ -47,7 +47,7 @@ def generate(
     tokenizer: MIDITokenizer,
     prompt = None,
     max_length: int = 1024,
-    temperature: float = 1.0,
+    temperature: list[float] = [1.1,1.1,1.1,1.1],
     top_k: list[int] = [10, 5, 10, 20],
     top_p: list[float] = [0.6, 0.8, 0.8, 0.6],
     device: str = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -70,6 +70,7 @@ def generate(
     """
     model.eval()
     model.to(device)
+    assert len(temperature) == len(top_k) == len(top_p) == len(tokenizer.categories)
     
     # Initialize with BOS token if no prompt
     if prompt is None:
@@ -80,7 +81,6 @@ def generate(
             generated = generated.unsqueeze(0)
         # batch dim = 1
     
-    vocab_size = list(tokenizer.vocab_size.values())
     tensor_eos_token = torch.tensor(tokenizer.eos_token, device=device)
     for _ in range(max_length):
         # Get model predictions
@@ -92,7 +92,7 @@ def generate(
 
         for idx, logits in enumerate(logits_full):
             # Get logits for the last position
-            next_token_logits = logits[0, -1, :] / temperature
+            next_token_logits = logits[0, -1, :] / temperature[idx]
         
             # Apply top-k and top-p filtering
             filtered_logits = top_k_top_p_filtering(next_token_logits, top_k=top_k[idx], top_p=top_p[idx])
@@ -105,26 +105,26 @@ def generate(
         if (tensor_eos_token == next_token_full).sum() > 0: # at least one eos HARDCODE
             print("\nCUR TOKEN:", next_token_full)
             print("\nSTD EOS:", tokenizer.eos_token)
-            generated = torch.cat([generated, tensor_eos_token.unsqueeze(0).unsqueeze(0)], dim=1)     
             break
         generated = torch.cat([generated, next_token_full.unsqueeze(0).unsqueeze(0)], dim=1)        
     
-    return generated[0].cpu().tolist()
+    return generated[0][1:].cpu().tolist()
 
 
 def GenerationWorkflow(use_parser: bool = True, user_args: dict = {}, preload_model: MIDITransformer | None = None, preload_prompt: torch.Tensor | None = None):
     if use_parser:
         parser = argparse.ArgumentParser(description='Generate MIDI using trained model')
         
-        parser.add_argument('--checkpoint_dir', type=str, default='checkpoints', help='Directory of checkpoints')
+        num_tasks = 7 # HARDCODED for Octuple
+        parser.add_argument('--checkpoint_dir', type=str, default='checkpoints_v3', help='Directory of checkpoints')
         parser.add_argument('--checkpoint_name', type=str, default='best_model.pt', help='Filename of model checkpoint')
         parser.add_argument('--output', type=str, default='generated.mid', help='Output MIDI file path')
         parser.add_argument('--prompt_midi', type=str, default=None, help='Optional MIDI file to use as prompt/seed')
         parser.add_argument('--prompt_length', type=int, default=None, help='Number of tokens to use from prompt (default: all)')
         parser.add_argument('--max_length', type=int, default=512, help='Maximum sequence length to generate')
-        parser.add_argument('--temperature', type=float, default=1.0, help='Sampling temperature')
-        parser.add_argument('--top_k', nargs=4, type=int, default=[10, 5, 10, 20], help='Top-k sampling parameter for 4 Heads')
-        parser.add_argument('--top_p', nargs=4, type=float, default=[0.6, 0.8, 0.8, 0.6], help='Nucleus sampling parameter for 4 Heads')
+        parser.add_argument('--temperature', nargs=num_tasks, type=float, default=[1.4,1.1,1.1,1.2], help='Sampling temperature')
+        parser.add_argument('--top_k', nargs=num_tasks, type=int, default=[10, 5, 10, 20], help='Top-k sampling parameter for 4 Heads')
+        parser.add_argument('--top_p', nargs=num_tasks, type=float, default=[0.6, 0.8, 0.8, 0.6], help='Nucleus sampling parameter for 4 Heads')
         
         parser.add_argument('--seed', type=int, default=None, help='Random seed')
         # this is what model will hear before regressive generation
@@ -140,7 +140,7 @@ def GenerationWorkflow(use_parser: bool = True, user_args: dict = {}, preload_mo
             "prompt_midi": None,
             "prompt_length": None,
             "max_length": 512,
-            "temperature": 1.0,
+            "temperature": [1.0,1.0,1.0,1.0],
             "top_k": [10, 5, 10, 20],
             "top_p": [0.6, 0.8, 0.8, 0.6],
             "seed": None,
@@ -161,13 +161,13 @@ def GenerationWorkflow(use_parser: bool = True, user_args: dict = {}, preload_mo
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
     # Load tokenizer config
-    tokenizer_config_path = os.path.join(args.checkpoint_dir, 'tokenizer_config.json')
+    # tokenizer_config_path = os.path.join(args.checkpoint_dir, 'tokenizer_config.json')
     
-    if not os.path.exists(tokenizer_config_path):
-        print(f"Tokenizer config not found at {tokenizer_config_path}")
-        return
-    with open(tokenizer_config_path, 'r') as f:
-        tokenizer_config = json.load(f)
+    # if not os.path.exists(tokenizer_config_path):
+    #     print(f"Tokenizer config not found at {tokenizer_config_path}")
+    #     return
+    # with open(tokenizer_config_path, 'r') as f:
+    #     tokenizer_config = json.load(f)
     # Initialize tokenizer
     # 这很诡异，你知道吗
     tokenizer = MIDITokenizer()
@@ -206,8 +206,8 @@ def GenerationWorkflow(use_parser: bool = True, user_args: dict = {}, preload_mo
                 return
             
             print(f"\nLoading prompt from: {args.prompt_midi}")
-            prompt_tokens = tokenizer.encode_midi(args.prompt_midi, piano_channels=piano_channels)
-            
+            prompt_tokens = tokenizer.encode_midi(args.prompt_midi).ids
+            prompt_tokens.insert(0, tokenizer.bos_token)
             # Use specified length or all tokens
             if args.prompt_length is not None:
                 prompt_tokens = prompt_tokens[:args.prompt_length]
@@ -215,16 +215,18 @@ def GenerationWorkflow(use_parser: bool = True, user_args: dict = {}, preload_mo
             else:
                 print(f"Using all {len(prompt_tokens)} tokens as prompt")
             
+            for i in prompt_tokens:
+                print(i)
             # Show prompt preview
-            print("\nPrompt sequence preview:")
-            for i, tid in enumerate(prompt_tokens[:10]):
-                token_name = []
-                for idx, key in enumerate(tokenizer.vocab_size):
-                    token_name.append(tokenizer.id_to_token[key][tid[idx]])
+            # print("\nPrompt sequence preview:")
+            # for i, tid in enumerate(prompt_tokens[:10]):
+            #     token_name = []
+            #     for idx, key in enumerate(tokenizer.vocab_sizes):
+            #         token_name.append(tokenizer.id_to_token[idx][tid[idx]])
                 
-                print(f"  {i}: {token_name}")
-            if len(prompt_tokens) > 10:
-                print(f"  ... ({len(prompt_tokens) - 10} more tokens)")
+            #     print(f"  {i}: {token_name}")
+            # if len(prompt_tokens) > 10:
+            #     print(f"  ... ({len(prompt_tokens) - 10} more tokens)")
             
             prompt = torch.tensor(prompt_tokens, dtype=torch.long)
     
@@ -245,7 +247,17 @@ def GenerationWorkflow(use_parser: bool = True, user_args: dict = {}, preload_mo
         top_p=args.top_p,
         device=device
     )
+    
+    # print("\nSequence preview:")
+    # for i, tid in enumerate(generated_tokens):
+    #     token_name = []
+    #     for idx, key in enumerate(tokenizer.vocab_sizes):
+    #         token_name.append(tokenizer.id_to_token[idx][tid[idx]])
+    #     print(f"  {i}: {token_name}")
+                
+                
     print(f"Generated {len(generated_tokens)} tokens, saving to {args.output}. ")
+    print(generated_tokens)
     tokenizer.decode_to_midi(generated_tokens, args.output)
 
 if __name__ == '__main__':

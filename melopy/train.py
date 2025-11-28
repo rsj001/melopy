@@ -18,7 +18,7 @@ import datetime
 
 from tokenizer import MIDITokenizer
 from dataset import MIDIDataset, get_midi_files
-from model import MIDITransformer, UncertaintyLossWrapper
+from model import MIDITransformer # , UncertaintyLossWrapper
 from visualizer import TrainVisualizer
 
 class Trainer:
@@ -28,7 +28,7 @@ class Trainer:
         self,
         model: MIDITransformer,
         train_loader: DataLoader,
-        vocab_size: List[int],
+        categories: List[str],
         num_epochs: int,
         val_loader: Optional[DataLoader] = None,
         learning_rate: float = 3e-4,
@@ -45,11 +45,11 @@ class Trainer:
         self.device = device
         self.checkpoint_dir = checkpoint_dir
         self.vis = vis
-        self.vocab_size = vocab_size
-        self.num_tasks = len(vocab_size)
+        # self.num_tasks = 4 # HARDCODED
         self.num_epochs = num_epochs
+        self.categories = categories
         # HARDCODED
-        self.loss_weights = torch.tensor([1.5, 0.6, 0.4, 1.0] ,device=device)
+        self.loss_weights = torch.tensor([1.5, 1.1, 0.6, 1.0, 1.0, 0.3, 0.3] ,device=device)
         # self.uncertainty = UncertaintyLossWrapper(self.num_tasks, device)
         
         os.makedirs(checkpoint_dir, exist_ok=True)
@@ -71,7 +71,9 @@ class Trainer:
         
         # Learning rate scheduler, based on num_epochs, init on first time run
         num_training_steps = len(train_loader) * num_epochs
-        num_warmup_steps = int(0.1 * num_training_steps)
+        num_warmup_steps = int(0.06 * num_training_steps)
+        
+        # TODO TODO not an efficient way to do this
         def lr_lambda(current_step):
             if current_step < num_warmup_steps:
                 return float(current_step) / float(max(1, num_warmup_steps))
@@ -136,24 +138,16 @@ class Trainer:
                             correct = (pred_ids == target_for_type)[target_for_type != 0].float() # NOTE THIS IS HARDCODED 
                             accuracies.append(correct.mean().item())
 
-                        
                         self.vis.log_loss(loss.item(), self.global_step)
                         self.vis.log_lr(self.optimizer, self.global_step)
 
                         # self.vis.log_grad_norm(self.uncertainty, self.global_step, name = 'uncertainty_grad_norm')
                         self.vis.log_grad_norm(self.model, self.global_step)
-
                         self.vis.log_loss(total_loss / (batch_idx + 1), self.global_step, prefix="train", name="avg_loss")
 
-                        # NOTE THIS IS HARDCODED
-                        self.vis.log_loss(accuracies[0], self.global_step, prefix="train_acc_token", name="pitch")
-                        self.vis.log_loss(accuracies[1], self.global_step, prefix="train_acc_token", name="duration")
-                        self.vis.log_loss(accuracies[2], self.global_step, prefix="train_acc_token", name="velocity")
-                        self.vis.log_loss(accuracies[3], self.global_step, prefix="train_acc_token", name="time_shift")
-                        self.vis.log_loss(losses[0], self.global_step, prefix="train_loss_token", name="pitch")
-                        self.vis.log_loss(losses[1], self.global_step, prefix="train_loss_token", name="duration")
-                        self.vis.log_loss(losses[2], self.global_step, prefix="train_loss_token", name="velocity")
-                        self.vis.log_loss(losses[3], self.global_step, prefix="train_loss_token", name="time_shift")
+                        for idx, category in enumerate(self.categories):
+                            self.vis.log_loss(accuracies[idx], self.global_step, prefix="train_acc_token", name=category)
+                            self.vis.log_loss(losses[idx], self.global_step, prefix="train_loss_token", name=category)
 
         
         avg_loss = total_loss / len(self.train_loader)
@@ -198,7 +192,7 @@ class Trainer:
             return config
         
         # HARDCODE
-        model_config = build_config_from_attrs(self.model, ["vocab_size", "d_model", "num_layers", "num_heads", "max_seq_length", "dropout", "pad_token_id"])
+        model_config = build_config_from_attrs(self.model, ["vocab_sizes", "d_model", "num_layers", "num_heads", "max_seq_length", "dropout", "pad_token_id"])
         with open(os.path.join(self.checkpoint_dir, "model_config.json"), "w") as f:
             json.dump(model_config, f, indent=4)
             
@@ -387,20 +381,21 @@ def main():
     # go default, check tokenizer.py for params
     # 我并不需要怎么重建这个 tokenizer
 
-    print(f"Vocabulary size: {tokenizer.vocab_size}")
-    print(f"Total Size: {tokenizer.vocab_size_full}")
+    print(f"Vocabulary size: {tokenizer.vocab_sizes}")
+    print(f"Total Size: {len(tokenizer.vocab_sizes)}")
     # Save tokenizer config
     os.makedirs(args.checkpoint_dir, exist_ok=True)
-    tokenizer_config = {
-        'min_pitch': tokenizer.min_pitch,
-        'max_pitch': tokenizer.max_pitch,
-        'velocity_bins': tokenizer.velocity_bins,
-        'duration_bins': tokenizer.duration_bins,
-        'time_shift_bins': tokenizer.time_shift_bins,
-        'version': tokenizer.version
-    }
-    with open(os.path.join(args.checkpoint_dir, 'tokenizer_config.json'), 'w') as f:
-        json.dump(tokenizer_config, f, indent=2)
+    
+    # tokenizer_config = {
+    #     'min_pitch': tokenizer.min_pitch,
+    #     'max_pitch': tokenizer.max_pitch,
+    #     'velocity_bins': tokenizer.velocity_bins,
+    #     'duration_bins': tokenizer.duration_bins,
+    #     'time_shift_bins': tokenizer.time_shift_bins,
+    #     'version': tokenizer.version
+    # }
+    # with open(os.path.join(args.checkpoint_dir, 'tokenizer_config.json'), 'w') as f:
+    #     json.dump(tokenizer_config, f, indent=2)
     
     if args.load_pth_with_weights is not None:
         if args.preprocess_dataset_as is not None:
@@ -509,7 +504,7 @@ def main():
     # Initialize model
     print("Initializing model...")
     model = MIDITransformer(
-        vocab_size=list(tokenizer.vocab_size.values()),
+        vocab_sizes=tokenizer.vocab_sizes,
         d_model=args.d_model,
         num_layers=args.num_layers,
         num_heads=args.num_heads,
@@ -526,10 +521,10 @@ def main():
         "output": "This will be forced to change in visualizer.mid",
         "prompt_midi": None,
         "prompt_length": None,
-        "max_length": 256,
-        "temperature": 1.2,
-        "top_k": [12, 12, 8, 20],
-        "top_p": [0.9, 0.9, 0.9, 0.9],
+        "max_length": 512,
+        "temperature": [1.2, 1.0, 0.8, 1.0, 1.0, 0.8, 0.8],
+        "top_k": [20] * 7,
+        "top_p": [0.9] * 7,
         "seed": None,
         "piano_channels": '0, 1, 2, 3, 4, 5'
     } # 这是给Visualizer的Generation准备的
@@ -539,8 +534,8 @@ def main():
         model=model,
         num_epochs=args.num_epochs, # 还用于重建 lambda scheduler
         save_every=args.save_every,
-        vocab_size=list(tokenizer.vocab_size.values()),
         train_loader=train_loader,
+        categories=tokenizer.categories,
         val_loader=val_loader,
         learning_rate=args.lr, # learning_rate 会被 resume 覆盖
         checkpoint_dir=args.checkpoint_dir,
