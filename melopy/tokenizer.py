@@ -13,7 +13,7 @@ TOKENIZER_PARAMS = {
     "use_programs": True,
     "num_tempos": 96,  # number of tempo bins
     "tempo_range": (20, 400),  # (min, max) 20 + 95 * 4 = 400
-    "max_bar_embedding": 192,
+    "max_bar_embedding": 256,
     # "sustain_pedal_duration": True,
     # "remove_duplicated_notes": True,
 }
