@@ -106,7 +106,7 @@ class MIDITransformer(nn.Module):
         # 随机掩码
         mask = None
         if self.training: # eval 模式下不开启
-            self.mask_prob = 0.15
+            self.mask_prob = 0.15 # HARDCODED mask prob = 0.15 !!!
             rand = torch.randn(batch_size, seq_len, device = x.device)
             rand[:, 0] = -torch.finfo(rand.dtype).max
             num_mask = min(int(seq_len * self.mask_prob), seq_len - 1)
