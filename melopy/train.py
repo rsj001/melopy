@@ -445,24 +445,41 @@ def main():
             return
         print(f"Found {len(midi_files)} MIDI files")
         
-        # Create dataset
-        dataset = MIDIDataset(
-            midi_files=midi_files,
-            tokenizer=tokenizer,
-            seq_length=args.seq_length,
-            piano_channels=piano_channels,
-            stride=args.chunk_stride,
-            num_workers=args.cpu_num_workers
-        )
-        if len(dataset) == 0:
-            print("No sequences created from MIDI files. Check your data.")
-            return
+        
         if args.preprocess_dataset_as is not None:
-            dataset.save(args.preprocess_dataset_as, {
-                "data_dir_with_weights": args.data_dir_with_weights
-            })
+            partial_file_stride = 15000
+            partial_file_id = 0
+            for partial_file_start in range(0, len(midi_files), partial_file_stride):
+                partial_file_id += 1
+                partial_file = midi_files[partial_file_start:partial_file_start+partial_file_stride]
+                print(f"Processing files {partial_file_start} to {partial_file_start+partial_file_stride}...")
+                dataset = MIDIDataset(
+                    midi_files=partial_file,
+                    tokenizer=tokenizer,
+                    seq_length=args.seq_length,
+                    piano_channels=piano_channels,
+                    stride=args.chunk_stride,
+                    num_workers=args.cpu_num_workers
+                )
+                if len(dataset) != 0:
+                    dataset.save(args.preprocess_dataset_as + f".{partial_file_id}.pth", {
+                        "data_dir_with_weights": args.data_dir_with_weights
+                    })
             print("Program terminated.")
             return
+        else:
+            # Create dataset
+            dataset = MIDIDataset(
+                midi_files=midi_files,
+                tokenizer=tokenizer,
+                seq_length=args.seq_length,
+                piano_channels=piano_channels,
+                stride=args.chunk_stride,
+                num_workers=args.cpu_num_workers
+            )
+            if len(dataset) == 0:
+                print("No sequences created from MIDI files. Check your data.")
+                return
     
     
     print(f"Loading MIDI files from {args.val_data_dir}...")
