@@ -77,20 +77,21 @@ class MIDIDataset(Dataset):
         
         num_batch_stride = 10000
         sub_tasks_count = 1
+        sub_tasks_total = len(midi_files) // num_batch_stride + 1
         for sub_tasks_idx in range(0, len(midi_files), num_batch_stride):
             sub_tasks = tasks[sub_tasks_idx:sub_tasks_idx+num_batch_stride]
-            print(f"Start processing batch #{sub_tasks_count}")
+            print(f"Start processing batch #{sub_tasks_count}/{sub_tasks_total} with {len(sub_tasks)} files...")
             with mp.Pool(self.num_workers, maxtasksperchild=10) as pool:
                 for return_val, message in tqdm(
                     pool.imap_unordered(worker, sub_tasks, chunksize=200),
                     total=len(sub_tasks),
-                    desc=f"#{sub_tasks_count}"
+                    desc=f"#{sub_tasks_count}/{sub_tasks_total}"
                 ):
                     if message is None:
                         self.sequences.extend(return_val)
                     else:
                         tqdm.write(message)
-            print(f"Finished processing batch #{sub_tasks_count}. Let's get some refresh.")
+            print(f"Finished processing batch #{sub_tasks_count}/{sub_tasks_total}. Let's get some refresh.")
             sub_tasks_count += 1
             time.sleep(2)
             
