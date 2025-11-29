@@ -73,13 +73,11 @@ class MIDIDataset(Dataset):
         ]
 
         print(f"Use {num_workers} workers.")
-        mp.set_start_method('spawn', force=True)
-        with mp.Pool(self.num_workers) as pool:
+        with mp.Pool(self.num_workers, maxtasksperchild=20) as pool:
             for return_val, message in tqdm(
-                pool.imap_unordered(worker, tasks, chunksize=500),
+                pool.imap_unordered(worker, tasks, chunksize=100),
                 total=len(midi_files),
-                desc="Preprocessing",
-                dynamic_ncols = True
+                desc="Preprocessing"
             ):
                 if message is None:
                     self.sequences.extend(return_val)
