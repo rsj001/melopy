@@ -76,7 +76,7 @@ class MIDIDataset(Dataset):
         mp.set_start_method('spawn', force=True)
         with mp.Pool(self.num_workers) as pool:
             for return_val, message in tqdm(
-                pool.imap_unordered(worker, tasks),
+                pool.imap_unordered(worker, tasks, chunksize=500),
                 total=len(midi_files),
                 desc="Preprocessing",
                 dynamic_ncols = True
