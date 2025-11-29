@@ -13,15 +13,10 @@ def worker(args):
         tokens = tokenizer.encode_midi(midi_file).ids
         tokens.insert(0, tokenizer.bos_token)
         tokens.append(tokenizer.eos_token)
-        for i in range(0, len(tokens), stride):
-            chunk = tokens[i:i + seq_length + 1]  # +1 for target
-            if len(chunk) == seq_length + 1:
-                return_val.append(chunk)
-            # elif len(chunk) > seq_length // 2:
-            #     padding_needed = (seq_length + 1) - len(chunk)
-            #     padded_chunk = chunk + [pad_token] * padding_needed
-            #     # print(f"{padded_chunk}")
-            #     return_val.append(padded_chunk)
+        Len = len(tokens)
+        sl = seq_length + 1
+        for i in range(0, Len - sl + 1, stride):
+            return_val.append(tokens[i:i+sl])
                 
     except Exception as e:
         return [], f"Error processing {midi_file}: {e}"
@@ -78,7 +73,7 @@ class MIDIDataset(Dataset):
         ]
 
         print(f"Use {num_workers} workers.")
-
+        mp.set_start_method('spawn', force=True)
         with mp.Pool(self.num_workers) as pool:
             for return_val, message in tqdm(
                 pool.imap_unordered(worker, tasks),
