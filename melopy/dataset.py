@@ -83,7 +83,7 @@ class MIDIDataset(Dataset):
                 for return_val, message in tqdm(
                     pool.imap_unordered(worker, sub_tasks, chunksize=200),
                     total=len(sub_tasks),
-                    desc="Preprocessing"
+                    desc=f"#{sub_tasks_idx}"
                 ):
                     if message is None:
                         self.sequences.extend(return_val)
