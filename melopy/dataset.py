@@ -5,11 +5,12 @@ from typing import List, Optional, Dict, Any
 from tokenizer import MIDITokenizer
 from tqdm.auto import tqdm
 import multiprocessing as mp
+import time
 # This is a static method.
 def worker(args):
-    midi_file, tokenizer, stride, seq_length, piano_channels, pad_token = args
-    return_val = []
     try:
+        midi_file, tokenizer, stride, seq_length, piano_channels, pad_token = args
+        return_val = []
         tokens = tokenizer.encode_midi(midi_file).ids
         tokens.insert(0, tokenizer.bos_token)
         tokens.append(tokenizer.eos_token)
@@ -17,10 +18,10 @@ def worker(args):
         sl = seq_length + 1
         for i in range(0, Len - sl + 1, stride):
             return_val.append(tokens[i:i+sl])
-                
+        return return_val, None       
     except Exception as e:
+        midi_file, tokenizer, stride, seq_length, piano_channels, pad_token = args
         return [], f"Error processing {midi_file}: {e}"
-    return return_val, None
 
 
 class MIDIDataset(Dataset):
@@ -73,16 +74,24 @@ class MIDIDataset(Dataset):
         ]
 
         print(f"Use {num_workers} workers.")
-        with mp.Pool(self.num_workers, maxtasksperchild=20) as pool:
-            for return_val, message in tqdm(
-                pool.imap_unordered(worker, tasks, chunksize=100),
-                total=len(midi_files),
-                desc="Preprocessing"
-            ):
-                if message is None:
-                    self.sequences.extend(return_val)
-                else:
-                    tqdm.write(message)
+        
+        num_batch_stride = 10000
+        for sub_tasks_idx in range(0, len(midi_files), num_batch_stride):
+            sub_tasks = tasks[sub_tasks_idx:sub_tasks_idx+num_batch_stride]
+            print(f"Start processing batch #{sub_tasks_idx}")
+            with mp.Pool(self.num_workers, maxtasksperchild=10) as pool:
+                for return_val, message in tqdm(
+                    pool.imap_unordered(worker, sub_tasks, chunksize=200),
+                    total=len(sub_tasks),
+                    desc="Preprocessing"
+                ):
+                    if message is None:
+                        self.sequences.extend(return_val)
+                    else:
+                        tqdm.write(message)
+            print(f"Finished processing batch #{sub_tasks_idx}. Let's get some refresh.")
+            time.sleep(2)
+            
 
         self.sequences = torch.tensor(self.sequences, dtype=torch.uint8)
         
