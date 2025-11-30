@@ -70,15 +70,15 @@ class Trainer:
         ])
         
         # Learning rate scheduler, based on num_epochs, init on first time run
-        num_training_steps = len(train_loader) * num_epochs
-        num_warmup_steps = int(0.06 * num_training_steps)
-        
-        # TODO TODO not an efficient way to do this
+        total_steps = len(train_loader) * num_epochs
+        warmup_ratio = 0.06
         def lr_lambda(current_step):
-            if current_step < num_warmup_steps:
-                return float(current_step) / float(max(1, num_warmup_steps))
-            progress = float(current_step - num_warmup_steps) / float(max(1, num_training_steps - num_warmup_steps))
-            return 0.5 * (1.0 + math.cos(math.pi * progress))
+            progress = current_step / total_steps
+            if progress < warmup_ratio:
+                return progress / warmup_ratio
+            progress = (progress - warmup_ratio) / (1 - warmup_ratio)
+            return 0.5 * (1 + math.cos(math.pi * progress))
+
         self.scheduler = torch.optim.lr_scheduler.LambdaLR(self.optimizer, lr_lambda)
         
         # Training state
