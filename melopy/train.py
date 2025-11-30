@@ -539,8 +539,8 @@ def main():
         "prompt_midi": None,
         "prompt_length": None,
         "max_length": 512,
-        "temperature": [1.2, 1.0, 0.8, 1.0, 1.0, 0.8, 0.8],
-        "top_k": [20] * 7,
+        "temperature": [1.25, 1.1, 1.0, 1.1, 1.1, 1.3, 1.1],
+        "top_k": [25] * 7,
         "top_p": [0.9] * 7,
         "seed": None,
         "piano_channels": '0, 1, 2, 3, 4, 5'
