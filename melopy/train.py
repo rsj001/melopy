@@ -49,7 +49,7 @@ class Trainer:
         self.num_epochs = num_epochs
         self.categories = categories
         # HARDCODED
-        self.loss_weights = torch.tensor([1.5, 1.1, 0.6, 1.0, 1.0, 0.3, 0.3] ,device=device)
+        self.loss_weights = torch.tensor([2.5, 1.1, 0.6, 1.0, 1.0, 0.3, 0.3] ,device=device)
         # self.uncertainty = UncertaintyLossWrapper(self.num_tasks, device)
         
         os.makedirs(checkpoint_dir, exist_ok=True)
